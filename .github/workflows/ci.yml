@@ -22,7 +22,18 @@ jobs:
         run: uv lock --check
       - name: Install the locked development environment
         run: uv sync --locked
-      - run: uv run --no-sync pytest
+      - name: Test with package and branch coverage
+        run: uv run --no-sync pytest --cov=gdml_inspector --cov-report=term-missing --cov-report=xml --cov-report=html
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-python-${{ matrix.python }}
+          path: |
+            coverage.xml
+            htmlcov/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Check Python formatting
         run: uv run --no-sync python -m ruff format --check .
       - name: Check Python lint

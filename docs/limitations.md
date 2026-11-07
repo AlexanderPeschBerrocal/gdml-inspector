@@ -4,6 +4,10 @@ This release packages the existing COCOA viewers. It does not establish full
 GDML conformance. Inspect the warnings and compare important geometry against a
 trusted source before drawing conclusions from a rendered alignment.
 
+The [testing guide](testing.md) distinguishes independently verified operations
+from six strict expected-failure regressions for tracked gaps. A passing base
+suite is not a claim that those gaps have been fixed.
+
 ## Parsing and placements
 
 - Pure Python supports numeric `box`, `tube`, `cutTube`, `cone`, and approximate

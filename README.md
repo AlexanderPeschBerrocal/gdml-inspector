@@ -113,6 +113,11 @@ uv run --no-sync python -m ruff format --check .
 uv run --no-sync python -m build --no-isolation
 ```
 
+To see package and branch coverage, run
+`uv run --no-sync pytest --cov=gdml_inspector --cov-report=term-missing`.
+The [testing guide](docs/testing.md) explains the analytic fixtures, deterministic
+invariant checks, tracked expected failures, and initial coverage baseline.
+
 `.python-version` selects Python 3.12.16 for development; the package still
 supports Python 3.10 and newer. The default `dev` group includes the separate
 `test`, `lint`, `build`, and `hooks` groups. Optional pyg4ometry is not installed

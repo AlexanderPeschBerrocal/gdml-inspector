@@ -54,7 +54,7 @@ runtime dependencies. Development tools are local dependency groups:
 
 | Group | Purpose |
 | --- | --- |
-| `test` | pytest and its resolved dependencies |
+| `test` | pytest, pytest-cov, Hypothesis, and their resolved dependencies |
 | `lint` | the project's pinned Ruff release |
 | `hooks` | pre-commit and the `lint` group |
 | `build` | distribution tooling and pinned setuptools/wheel |
@@ -200,6 +200,17 @@ the hook; offline hook execution intentionally does not repair environments.
 Use `uv run --no-sync pre-commit uninstall` to remove the installed local hook.
 
 ## Compatibility and distribution checks
+
+The [testing guide](testing.md) describes the numerical reference expectations,
+deterministic generated cases, known expected failures, and coverage baseline.
+For a local package/branch coverage report:
+
+```bash
+uv run --no-sync pytest --cov=gdml_inspector --cov-report=term-missing --cov-report=xml --cov-report=html
+```
+
+CI uploads XML/HTML reports per interpreter. Coverage has no arbitrary minimum
+threshold; expected failures do not imply the corresponding geometry is correct.
 
 To exercise another interpreter, override the development pin explicitly:
 

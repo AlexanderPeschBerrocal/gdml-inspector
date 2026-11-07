@@ -21,7 +21,7 @@ pyg4ometry = ["pyg4ometry"]
 
 # Development tools are local dependency groups, not published package extras.
 [dependency-groups]
-test = ["pytest>=8,<10"]
+test = ["pytest>=8,<10", "pytest-cov>=6,<8", "hypothesis>=6,<7"]
 lint = ["ruff==0.16.5"]
 hooks = [{ include-group = "lint" }, "pre-commit>=4,<5"]
 build = ["build>=1.2", "setuptools==84.2.1", "wheel==0.48.0"]
@@ -52,6 +52,16 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+xfail_strict = true
+
+[tool.coverage.run]
+source = ["gdml_inspector"]
+branch = true
+relative_files = true
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
 
 [tool.ruff]
 target-version = "py310"
