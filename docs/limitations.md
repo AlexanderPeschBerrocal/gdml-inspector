@@ -5,7 +5,7 @@ GDML conformance. Inspect the warnings and compare important geometry against a
 trusted source before drawing conclusions from a rendered alignment.
 
 The [testing guide](testing.md) distinguishes independently verified operations
-from six strict expected-failure regressions for tracked gaps. A passing base
+from five strict expected-failure regressions for tracked gaps. A passing base
 suite is not a claim that those gaps have been fixed.
 
 ## Parsing and placements
@@ -19,9 +19,10 @@ suite is not a claim that those gaps have been fixed.
   scale/reflection, and constants/expressions are not resolved. Unparseable
   numeric values fall back to defaults; unknown units can silently fall back.
 - The inherited helpers use degrees as the missing solid-angle default, but
-  radians for unitless inline rotations. Their placement rotation composition
-  has not been reconciled with the Geant4 conventions handled in ROOT Explorer.
-  Prefer explicit units; explicit units alone do not fix rotation conventions.
+  radians for unitless inline rotations. Physvol placement rotation now uses
+  Geant4's inverse convention, reconciled with ROOT Explorer; named transform
+  references, scale/reflection, and the solid-angle default above remain
+  unresolved. Prefer explicit units regardless.
 - Duplicate definitions can overwrite earlier definitions. Deep/cyclic
   references do not yet receive targeted diagnostics. The CLI reports a failed
   recursion as an error, but there is no complete reference-graph validator.

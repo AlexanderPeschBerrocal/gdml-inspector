@@ -69,10 +69,10 @@ also provides the reference for unitless solid angles. These conventions were
 checked against the reference source, without copying its implementation or
 requiring Geant4 during testing.
 
-Six tests assert desired behaviour that the current implementation does not
+Five tests assert desired behaviour that the current implementation does not
 yet provide:
 
-- [#1](https://github.com/AlexanderPeschBerrocal/gdml-inspector/issues/1): inverse physical-placement rotation, named positions, unitless solid-angle units, and assembly expansion.
+- [#1](https://github.com/AlexanderPeschBerrocal/gdml-inspector/issues/1): named positions, unitless solid-angle units, and assembly expansion. Inverse physical-placement rotation is now a regression test in `test_transforms.py`.
 - [#7](https://github.com/AlexanderPeschBerrocal/gdml-inspector/issues/7): a hard standalone vertex budget when one object would exceed it.
 - [#8](https://github.com/AlexanderPeschBerrocal/gdml-inspector/issues/8): an actionable diagnostic for an unknown length unit.
 

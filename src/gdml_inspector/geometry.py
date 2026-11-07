@@ -137,9 +137,19 @@ def parse_vec(el: ET.Element | None, unit_map: dict[str | None, float]) -> Vec3:
 
 
 def placement_matrix(physvol: ET.Element) -> Mat4:
+    """Return the transform that places a daughter volume in its mother.
+
+    Like Geant4's GDML reader (G4GDMLReadStructure::PhysvolRead), the placement
+    uses the inverse of the rotation matrix built from the x, y and z angles: a
+    physvol rotation describes the rotation of the daughter's frame, so the
+    volume itself is turned the opposite way. Boolean operands are different
+    and use the rotation as given (see GDMLSceneBuilder.solid_mesh).
+    """
     pos = parse_vec(child(physvol, "position"), LEN_UNITS)
-    rot = parse_vec(child(physvol, "rotation"), ANGLE_UNITS)
-    return matmul(translate(*pos), euler_xyz(*rot))
+    rx, ry, rz = parse_vec(child(physvol, "rotation"), ANGLE_UNITS)
+    # (Rz Ry Rx)^-1 = Rx(-x) Ry(-y) Rz(-z)
+    inverse_rotation = matmul(rot_x(-rx), matmul(rot_y(-ry), rot_z(-rz)))
+    return matmul(translate(*pos), inverse_rotation)
 
 
 def add_tri(tris: list[Triangle], a: Vec3, b: Vec3, c: Vec3) -> None:

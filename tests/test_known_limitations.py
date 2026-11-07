@@ -13,17 +13,6 @@ from gdml_inspector import geometry
 from .helpers import scene_builder
 
 
-@pytest.mark.xfail(
-    raises=AssertionError, reason="#1: physvol uses the inverse GDML rotation"
-)
-def test_gdml_quarter_turn_uses_the_inverse_placement_rotation(nested_box):
-    # Geant4 G4GDMLReadStructure::PhysvolRead constructs an inverse rotation.
-    # Child (5,0,0) turns to (0,-5,0), then adds parent (10,20,30).
-    # Half-extents after the quarter turn are (2,1,3).
-    scene = scene_builder(nested_box(90)).build()
-    assert scene["meta"]["bbox"] == pytest.approx([8, 14, 27, 12, 16, 33])
-
-
 @pytest.mark.xfail(raises=AssertionError, reason="#1: named positions are unresolved")
 def test_named_position_reference_moves_the_placed_volume(single_volume):
     path = single_volume(
