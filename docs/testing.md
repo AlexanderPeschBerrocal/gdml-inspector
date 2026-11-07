@@ -21,11 +21,11 @@ tests/test_transforms.py tests/test_meshes.py tests/test_invariants.py`.
 
 | Test module | Contract checked |
 | --- | --- |
-| `test_units.py` | Explicit length/angle conversion factors, positions, and full box lengths |
+| `test_units.py` | Explicit length/angle conversion factors, positions, full box lengths, and unitless length/angle defaults |
 | `test_transforms.py` | Active basis-vector rotations, composition order, Euler helper order, nested placement bounds |
 | `test_meshes.py` | Box area, tube/cone radii and extents, cut-plane equations, nondegenerate triangles and closed edges |
 | `test_invariants.py` | Rotation distance preservation, affine composition, unit-equivalent boxes |
-| `test_parser.py` | Small analytic scenes, repeated placements, namespaces, selection flags, missing references and approximation warnings |
+| `test_parser.py` | Small analytic scenes, repeated placements, namespaces, selection flags, named transform references, assembly placement, missing references and approximation warnings |
 | `test_chunks.py` | Independently decoded little-endian payloads, translated vertices, packing, asset reuse |
 | `test_limits.py` | Object caps, complete-object vertex boundaries, empty budgets, lazy overshoot rejection |
 | `test_cli.py`, `test_version.py`, `test_exports.py` | Error/absence paths, launcher version options, portable HTML, script escaping |
@@ -69,10 +69,9 @@ also provides the reference for unitless solid angles. These conventions were
 checked against the reference source, without copying its implementation or
 requiring Geant4 during testing.
 
-Five tests assert desired behaviour that the current implementation does not
+Two tests assert desired behaviour that the current implementation does not
 yet provide:
 
-- [#1](https://github.com/AlexanderPeschBerrocal/gdml-inspector/issues/1): named positions, unitless solid-angle units, and assembly expansion. Inverse physical-placement rotation is now a regression test in `test_transforms.py`.
 - [#7](https://github.com/AlexanderPeschBerrocal/gdml-inspector/issues/7): a hard standalone vertex budget when one object would exceed it.
 - [#8](https://github.com/AlexanderPeschBerrocal/gdml-inspector/issues/8): an actionable diagnostic for an unknown length unit.
 

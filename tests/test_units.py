@@ -42,6 +42,16 @@ def test_unitless_lengths_are_millimetres():
     assert geometry.length({"x": "2.5"}, "x") == 2.5
 
 
+def test_unitless_angles_are_radians():
+    assert geometry.angle({"deltaphi": str(math.pi / 2)}, "deltaphi") == pytest.approx(
+        math.pi / 2
+    )
+
+
+def test_missing_angle_attribute_uses_its_degree_default():
+    assert geometry.angle({}, "deltaphi", default_deg=360) == pytest.approx(2 * math.pi)
+
+
 @pytest.mark.parametrize(
     ("unit", "coordinates"),
     [("mm", (10, -20, 30)), ("cm", (1, -2, 3)), ("m", (0.01, -0.02, 0.03))],

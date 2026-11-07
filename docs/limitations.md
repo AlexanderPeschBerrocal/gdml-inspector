@@ -5,24 +5,26 @@ GDML conformance. Inspect the warnings and compare important geometry against a
 trusted source before drawing conclusions from a rendered alignment.
 
 The [testing guide](testing.md) distinguishes independently verified operations
-from five strict expected-failure regressions for tracked gaps. A passing base
+from two strict expected-failure regressions for tracked gaps. A passing base
 suite is not a claim that those gaps have been fixed.
 
 ## Parsing and placements
 
 - Pure Python supports numeric `box`, `tube`, `cutTube`, `cone`, and approximate
   Boolean meshing. Other solid types are skipped with warnings.
-- Only ordinary nested `volume`/`physvol` placements are traversed. Assemblies,
-  replicas, divisions, parameterisation, and external-file references are not
+- Ordinary nested `volume`/`physvol` placements and `assembly` groups are
+  traversed, with an assembly's physvols placed relative to its own placement.
+  Replicas, divisions, parameterisation, and external-file references are not
   expanded. Those constructs do not yet consistently emit warnings.
-- Inline numeric positions and rotations are read. Named transform references,
-  scale/reflection, and constants/expressions are not resolved. Unparseable
-  numeric values fall back to defaults; unknown units can silently fall back.
-- The inherited helpers use degrees as the missing solid-angle default, but
-  radians for unitless inline rotations. Physvol placement rotation now uses
-  Geant4's inverse convention, reconciled with ROOT Explorer; named transform
-  references, scale/reflection, and the solid-angle default above remain
-  unresolved. Prefer explicit units regardless.
+- Positions and rotations are read inline or resolved by name through
+  `positionref`/`rotationref` against `<define>`; a broken reference raises
+  rather than silently using the identity transform. Scale/reflection and
+  constants/expressions are not resolved. Unparseable numeric values fall back
+  to defaults; unknown units can silently fall back.
+- Physvol placement rotation uses Geant4's inverse convention, reconciled with
+  ROOT Explorer. Angles without an aunit/unit default to radians, per the GDML
+  schema, for both rotations and solid-angle parameters. Boolean operand
+  rotations are unaffected and use the rotation as given.
 - Duplicate definitions can overwrite earlier definitions. Deep/cyclic
   references do not yet receive targeted diagnostics. The CLI reports a failed
   recursion as an error, but there is no complete reference-graph validator.

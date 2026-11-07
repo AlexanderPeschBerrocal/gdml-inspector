@@ -4,49 +4,9 @@ Only assertion failures are expected: unrelated crashes remain failures.
 Strict XPASS requires removing the marker when a linked issue fixes the gap.
 """
 
-import math
-
 import pytest
 
-from gdml_inspector import geometry
-
 from .helpers import scene_builder
-
-
-@pytest.mark.xfail(raises=AssertionError, reason="#1: named positions are unresolved")
-def test_named_position_reference_moves_the_placed_volume(single_volume):
-    path = single_volume(
-        placement='<positionref ref="shift"/>',
-        define='<position name="shift" x="10" y="20" z="30" unit="mm"/>',
-    )
-    assert scene_builder(path).build()["meta"]["bbox"] == [9, 18, 27, 11, 22, 33]
-
-
-@pytest.mark.xfail(
-    raises=AssertionError, reason="#1: unitless solid angles should use radians"
-)
-def test_unitless_solid_angle_is_in_radians():
-    assert geometry.angle({"deltaphi": str(math.pi / 2)}, "deltaphi") == pytest.approx(
-        math.pi / 2
-    )
-
-
-@pytest.mark.xfail(raises=AssertionError, reason="#1: assemblies are not expanded")
-def test_assembly_preserves_its_child_placement(write_gdml):
-    path = write_gdml(
-        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
-        structure="""
-<volume name="leaf"><materialref ref="G4_Si"/><solidref ref="shape"/></volume>
-<assembly name="group"><physvol><volumeref ref="leaf"/>
-  <position x="10" y="0" z="0" unit="mm"/>
-</physvol></assembly>
-<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
-  <physvol><volumeref ref="group"/></physvol>
-</volume>""",
-    )
-    scene = scene_builder(path).build()
-    assert scene["meta"]["objects"] == 1
-    assert scene["meta"]["bbox"] == [9, -2, -3, 11, 2, 3]
 
 
 @pytest.mark.xfail(

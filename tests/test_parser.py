@@ -102,6 +102,38 @@ def test_unsupported_solid_is_reported_as_skipped(single_volume):
     assert any("Unsupported solid type sphere" in w for w in scene["meta"]["warnings"])
 
 
+def test_named_position_reference_moves_the_placed_volume(single_volume):
+    path = single_volume(
+        placement='<positionref ref="shift"/>',
+        define='<position name="shift" x="10" y="20" z="30" unit="mm"/>',
+    )
+    assert scene_builder(path).build()["meta"]["bbox"] == [9, 18, 27, 11, 22, 33]
+
+
+def test_missing_position_reference_raises_an_actionable_error(single_volume):
+    path = single_volume(placement='<positionref ref="absent"/>')
+    with pytest.raises(ValueError, match="position reference: absent"):
+        scene_builder(path).build()
+
+
+def test_assembly_placements_are_relative_to_the_assembly_itself(write_gdml):
+    # Assemblies have no solid of their own; only their physvols are placed.
+    path = write_gdml(
+        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        structure="""
+<volume name="leaf"><materialref ref="G4_Si"/><solidref ref="shape"/></volume>
+<assembly name="group"><physvol><volumeref ref="leaf"/>
+  <position x="10" y="0" z="0" unit="mm"/>
+</physvol></assembly>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol><volumeref ref="group"/></physvol>
+</volume>""",
+    )
+    scene = scene_builder(path).build()
+    assert scene["meta"]["objects"] == 1
+    assert scene["meta"]["bbox"] == [9, -2, -3, 11, 2, 3]
+
+
 def test_union_positions_its_second_operand_without_claiming_csg_fidelity(
     single_volume,
 ):

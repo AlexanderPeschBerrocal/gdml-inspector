@@ -220,6 +220,38 @@ class LazyBuilderMixin:
         self.total_vertices += vertex_count
         self.total_objects += 1
 
+    def place_physvols(
+        self, physvols: list[base.ET.Element], matrix: base.Mat4, path: str
+    ) -> None:
+        """Traverse the daughters placed by ``physvols`` in a mother at ``matrix``."""
+        for placement in physvols:
+            ref_el = base.child(placement, "volumeref")
+            if ref_el is None:
+                continue
+            ref = ref_el.attrib.get("ref", "")
+            placement_name = placement.attrib.get("name", ref)
+            child_matrix = base.matmul(
+                matrix,
+                base.placement_matrix(placement, self.positions, self.rotations),
+            )
+            # Like Geant4, a reference names an assembly before a logical volume.
+            # An assembly's physvols are placed relative to its own placement.
+            assembly = self.assemblies.get(ref)
+            if assembly is not None:
+                self.place_physvols(
+                    base.children(assembly, "physvol"),
+                    child_matrix,
+                    f"{path}/{placement_name}",
+                )
+            else:
+                child_volume = self.volumes.get(ref)
+                if child_volume is None:
+                    self.scene.warn(f"Missing volume reference: {ref}")
+                    continue
+                self.traverse(child_volume, child_matrix, f"{path}/{placement_name}")
+            if self.stopped_at_limit:
+                return
+
     def traverse(self, volume: base.VolumeDef, matrix: base.Mat4, path: str) -> None:
         if (
             self.total_objects >= self.max_objects
@@ -234,20 +266,7 @@ class LazyBuilderMixin:
         )
         if should_render:
             self.add_volume(volume, matrix, path)
-        for placement in placements:
-            ref_el = base.child(placement, "volumeref")
-            if ref_el is None:
-                continue
-            ref = ref_el.attrib.get("ref", "")
-            child_volume = self.volumes.get(ref)
-            if child_volume is None:
-                self.scene.warn(f"Missing volume reference: {ref}")
-                continue
-            placement_name = placement.attrib.get("name", ref)
-            child_matrix = base.matmul(matrix, base.placement_matrix(placement))
-            self.traverse(child_volume, child_matrix, f"{path}/{placement_name}")
-            if self.stopped_at_limit:
-                return
+        self.place_physvols(placements, matrix, path)
 
     def build_chunks(self) -> None:
         self.parse()
