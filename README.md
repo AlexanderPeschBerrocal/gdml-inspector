@@ -21,8 +21,8 @@ python -m pip install .
 gdml-inspector examples/detector.gdml --backend python --serve
 ```
 
-For development, use `python -m pip install -e '.[dev]'` instead. The package is
-not yet published to PyPI.
+For development, use the locked uv setup described below. The package is not
+yet published to PyPI.
 
 Export a portable single file:
 
@@ -102,12 +102,26 @@ options, asset reuse, and optional backend debugging.
 
 ## Development
 
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.6,
+then use the committed lockfile:
+
 ```bash
-python -m pip install -e '.[dev]'
-python -m pytest
-ruff check .
-python -m build
+uv sync --locked
+uv run --no-sync pytest
+uv run --no-sync ruff check .
+uv run --no-sync python -m build --no-isolation
 ```
+
+`.python-version` selects Python 3.12.16 for development; the package still
+supports Python 3.10 and newer. The default `dev` group includes the separate
+`test`, `lint`, and `build` groups. Optional pyg4ometry is not installed unless
+requested with `uv sync --locked --extra pyg4ometry`. Ordinary pip installations
+continue to use the package metadata independently of `uv.lock`.
+
+See the [contributor guide](docs/contributing.md) for individual groups, pip
+development setup, dependency updates, compatibility checks, and the branch/PR
+workflow. Development tools are no longer exposed as `.[dev]` or `.[test]`
+package extras.
 
 The `src/gdml_inspector` package separates geometry/meshing, the optional backend,
 single-file and lazy exporters, local serving, and bundled HTML templates.
