@@ -23,7 +23,10 @@ jobs:
       - name: Install the locked development environment
         run: uv sync --locked
       - run: uv run --no-sync pytest
-      - run: uv run --no-sync ruff check .
+      - name: Check Python formatting
+        run: uv run --no-sync python -m ruff format --check .
+      - name: Check Python lint
+        run: uv run --no-sync python -m ruff check --output-format=github .
       - name: Build with the locked build tools
         run: uv run --no-sync python -m build --no-isolation
       - name: Verify the wheel outside the checkout

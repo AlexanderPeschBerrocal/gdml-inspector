@@ -27,7 +27,8 @@ From the repository root:
 ```bash
 uv sync --locked
 uv run --no-sync pytest
-uv run --no-sync ruff check .
+uv run --no-sync python -m ruff check .
+uv run --no-sync python -m ruff format --check .
 uv run --no-sync python -m build --no-isolation
 ```
 
@@ -55,8 +56,9 @@ runtime dependencies. Development tools are local dependency groups:
 | --- | --- |
 | `test` | pytest and its resolved dependencies |
 | `lint` | the project's pinned Ruff release |
+| `hooks` | pre-commit and the `lint` group |
 | `build` | distribution tooling and pinned setuptools/wheel |
-| `dev` | includes `test`, `lint`, and `build`; installed by default |
+| `dev` | includes `test`, `lint`, `build`, and `hooks`; installed by default |
 
 Install only a particular group:
 
@@ -65,7 +67,8 @@ uv sync --locked --no-default-groups --group test
 uv run --no-sync pytest
 
 uv sync --locked --no-default-groups --group lint
-uv run --no-sync ruff check .
+uv run --no-sync python -m ruff check .
+uv run --no-sync python -m ruff format --check .
 
 uv sync --locked --no-default-groups --group build
 uv run --no-sync python -m build --no-isolation
@@ -134,12 +137,67 @@ python -m pip install --upgrade 'pip>=25.1'
 python -m pip install -e . --group dev
 python -m pytest
 python -m ruff check .
+python -m ruff format --check .
 python -m build --no-isolation
 ```
 
 This reads the group declarations but resolves versions independently of
 `uv.lock`. The former `.[dev]` and `.[test]` extras have been replaced by groups.
 End users needing meshing support can still use `pip install '.[pyg4ometry]'`.
+
+## Formatting, lint, and commit hooks
+
+Python formatting and lint share `pyproject.toml` and the Ruff version pinned in
+the `lint` group and resolved in `uv.lock`. Ruff targets Python 3.10, uses
+88-character lines, double quotes, spaces, and LF endings. The selected checks
+cover basic syntax/errors, undefined/unused names, import ordering (`I`),
+Python-version-aware modernisation (`UP`), and bug-prone patterns (`B`).
+Unsafe automatic fixes are not enabled.
+
+After `uv sync --locked`, enable hooks for this checkout:
+
+```bash
+uv run --no-sync pre-commit install
+uv run --no-sync pre-commit run --all-files
+```
+
+For only the hook tooling, use
+`uv sync --locked --no-default-groups --group hooks` first. That group includes
+Ruff, so it is sufficient for both local hooks. Installation creates a local
+Git hook; it is opt-in for each clone. The hook configuration is committed.
+
+The hooks run lint with safe fixes before formatting. They are repository-local
+system hooks and invoke `uv run --no-sync --offline python -m ruff`, using the
+selected project Python's installed Ruff. They do not install an independent
+Ruff environment or sync/build the project during a commit. uv must be on PATH,
+including when Git is launched from an editor. Pip-only contributors can use
+the manual commands below; these hook entries specifically require uv.
+
+To check without installing hooks, use the same non-mutating commands as CI:
+
+```bash
+uv run --no-sync python -m ruff check .
+uv run --no-sync python -m ruff format --check .
+```
+
+To fix locally:
+
+```bash
+uv run --no-sync python -m ruff check --fix .
+uv run --no-sync python -m ruff format .
+```
+
+`exports/`, `build/`, and `dist/` are excluded from Ruff and the hook file
+selection. Ruff's default exclusions also cover virtual environments and cache
+directories. Forced exclusion applies even to an explicitly supplied generated
+file. CI only checks; it never fixes files or commits formatting changes.
+
+If a hook changes a file, the commit stops: inspect `git diff`, stage the
+intended changes again, and retry. Fix any remaining lint errors manually.
+After updating the lock or Ruff pin, run `uv sync --locked` again. If a hook
+cannot find uv, Python, or the Ruff module, repair PATH and run that sync outside
+the hook; offline hook execution intentionally does not repair environments.
+Use `uv run --no-sync pre-commit uninstall` to remove the installed local hook.
 
 ## Compatibility and distribution checks
 
@@ -151,8 +209,9 @@ uv run --no-sync --python 3.10 pytest
 uv sync --locked
 ```
 
-CI checks the lock, installs the locked development groups, runs tests/lint,
-and builds distributions for each matrix interpreter. It then installs the
+CI checks the lock, installs the locked development groups, runs tests and
+non-mutating lint/format checks, and builds distributions for each matrix
+interpreter. It then installs the
 wheel independently into a fresh environment outside the checkout, checks its
 dependency metadata, and exports both standalone and lazy viewers. That check
 also ensures development groups have not become runtime requirements.

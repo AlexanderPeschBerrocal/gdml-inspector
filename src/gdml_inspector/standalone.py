@@ -7,17 +7,17 @@ import html
 import json
 import sys
 import tempfile
+from collections.abc import Sequence
 from importlib.resources import files
 from pathlib import Path
-from typing import Dict, Sequence
 
 from . import __version__
-from .geometry import GDMLSceneBuilder, QUALITY_SEGMENTS
+from .geometry import QUALITY_SEGMENTS, GDMLSceneBuilder
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder, debug_pyg4ometry_mesh
 from .server import serve_file
 
 
-def write_html(scene: Dict[str, object], output: Path) -> None:
+def write_html(scene: dict[str, object], output: Path) -> None:
     title = html.escape(Path(str(scene["meta"]["source"])).name)  # type: ignore[index]
     output.write_text(
         files("gdml_inspector.assets")

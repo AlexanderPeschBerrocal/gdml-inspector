@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
 
 from .geometry import GDMLSceneBuilder, Triangle, Vec3, add_tri
 
@@ -24,12 +24,12 @@ def maybe_call(obj: object, names: Sequence[str]) -> object | None:
     return None
 
 
-def numeric_triplet(value: object) -> Optional[Vec3]:
+def numeric_triplet(value: object) -> Vec3 | None:
     seen: set[int] = set()
     return _numeric_triplet(value, seen)
 
 
-def _numeric_triplet(value: object, seen: set[int]) -> Optional[Vec3]:
+def _numeric_triplet(value: object, seen: set[int]) -> Vec3 | None:
     if value is None:
         return None
     obj_id = id(value)
@@ -44,7 +44,7 @@ def _numeric_triplet(value: object, seen: set[int]) -> Optional[Vec3]:
             pass
 
     if hasattr(value, "pos"):
-        point = _numeric_triplet(getattr(value, "pos"), seen)
+        point = _numeric_triplet(value.pos, seen)
         if point is not None:
             return point
 
@@ -83,9 +83,9 @@ def _numeric_triplet(value: object, seen: set[int]) -> Optional[Vec3]:
     return None
 
 
-def triangulate_vertex_face_mesh(vertices: object, faces: object) -> List[Triangle]:
+def triangulate_vertex_face_mesh(vertices: object, faces: object) -> list[Triangle]:
     verts_raw = list(vertices)  # type: ignore[arg-type]
-    verts: List[Vec3] = []
+    verts: list[Vec3] = []
     for item in verts_raw:
         point = numeric_triplet(item)
         if point is not None:
@@ -93,13 +93,13 @@ def triangulate_vertex_face_mesh(vertices: object, faces: object) -> List[Triang
     if not verts:
         return []
 
-    tris: List[Triangle] = []
+    tris: list[Triangle] = []
     if hasattr(faces, "tolist"):
         faces = faces.tolist()  # type: ignore[assignment]
     if isinstance(faces, tuple):
         faces = list(faces)
 
-    face_list: List[object]
+    face_list: list[object]
     if isinstance(faces, list) and faces and all(isinstance(x, int) for x in faces):
         face_list = []
         i = 0
@@ -126,7 +126,7 @@ def triangulate_vertex_face_mesh(vertices: object, faces: object) -> List[Triang
     return tris
 
 
-def parse_off_mesh(path: Path) -> List[Triangle]:
+def parse_off_mesh(path: Path) -> list[Triangle]:
     """Parse a simple OFF mesh written by pyg4ometry/pycgal."""
 
     def next_data_line(handle) -> str:
@@ -153,14 +153,14 @@ def parse_off_mesh(path: Path) -> List[Triangle]:
         n_vertices = int(counts[0])
         n_faces = int(counts[1])
 
-        vertices: List[Vec3] = []
+        vertices: list[Vec3] = []
         for _ in range(n_vertices):
             parts = next_data_line(handle).split()
             if len(parts) < 3:
                 raise ValueError("Malformed OFF vertex line")
             vertices.append((float(parts[0]), float(parts[1]), float(parts[2])))
 
-        tris: List[Triangle] = []
+        tris: list[Triangle] = []
         for _ in range(n_faces):
             parts = next_data_line(handle).split()
             if len(parts) < 4:
@@ -180,7 +180,7 @@ def parse_off_mesh(path: Path) -> List[Triangle]:
     return tris
 
 
-def extract_triangles_via_off(mesh: object) -> List[Triangle]:
+def extract_triangles_via_off(mesh: object) -> list[Triangle]:
     write_off = getattr(mesh, "writeOff", None)
     if not callable(write_off):
         return []
@@ -202,7 +202,7 @@ def extract_triangles_via_off(mesh: object) -> List[Triangle]:
             pass
 
 
-def extract_triangles_from_pyg4ometry_mesh(mesh: object) -> List[Triangle]:
+def extract_triangles_from_pyg4ometry_mesh(mesh: object) -> list[Triangle]:
     """Best-effort adapter for pyg4ometry/pycsg mesh objects.
 
     pyg4ometry has changed mesh internals across releases. This adapter accepts
@@ -246,7 +246,7 @@ def extract_triangles_from_pyg4ometry_mesh(mesh: object) -> List[Triangle]:
     polygons = maybe_call(mesh, ["polygons"])
     if polygons is None and isinstance(mesh, (list, tuple)):
         polygons = mesh
-    tris: List[Triangle] = []
+    tris: list[Triangle] = []
     if polygons is not None:
         for polygon in list(polygons):  # type: ignore[arg-type]
             raw_vertices = maybe_call(polygon, ["vertices", "verts", "points"])
@@ -274,11 +274,11 @@ def short_repr(value: object, limit: int = 240) -> str:
     return text
 
 
-def public_attrs(value: object, limit: int = 80) -> List[str]:
+def public_attrs(value: object, limit: int = 80) -> list[str]:
     return [name for name in dir(value) if not name.startswith("_")][:limit]
 
 
-def describe_object(label: str, value: object, depth: int = 0) -> List[str]:
+def describe_object(label: str, value: object, depth: int = 0) -> list[str]:
     indent = "  " * depth
     lines = [
         f"{indent}{label}: type={type(value).__module__}.{type(value).__name__}",
@@ -288,7 +288,7 @@ def describe_object(label: str, value: object, depth: int = 0) -> List[str]:
     return lines
 
 
-def debug_pyg4ometry_mesh(gdml_path: Path, solid_name: Optional[str] = None) -> int:
+def debug_pyg4ometry_mesh(gdml_path: Path, solid_name: str | None = None) -> int:
     try:
         from pyg4ometry import gdml as pyg4_gdml  # type: ignore
     except ModuleNotFoundError:
@@ -383,7 +383,7 @@ def debug_pyg4ometry_mesh(gdml_path: Path, solid_name: Optional[str] = None) -> 
                         print(line)
                     print(f"numeric_triplet(vertex[0]) -> {numeric_triplet(vertex)}")
                     if hasattr(vertex, "pos"):
-                        pos = getattr(vertex, "pos")
+                        pos = vertex.pos
                         for line in describe_object("vertex[0].pos", pos):
                             print(line)
                         print(
@@ -428,7 +428,7 @@ class Pyg4ometrySceneBuilder(GDMLSceneBuilder):
             )
         self.pyg4ometry_solids = solid_dict
 
-    def solid_mesh(self, ref: str) -> Tuple[List[Triangle], str]:
+    def solid_mesh(self, ref: str) -> tuple[list[Triangle], str]:
         key = f"pyg4ometry:{ref}"
         if key in self.mesh_cache:
             return self.mesh_cache[key]
