@@ -56,13 +56,18 @@ def test_active_euler_helper_applies_x_then_y_then_z():
 
 @pytest.mark.parametrize(
     ("rotation_deg", "expected"),
-    [(0, [14, 18, 27, 16, 22, 33]), (180, [4, 18, 27, 6, 22, 33])],
+    [
+        (0, [14, 18, 27, 16, 22, 33]),
+        (180, [4, 18, 27, 6, 22, 33]),
+        (90, [8, 14, 27, 12, 16, 33]),
+    ],
 )
 def test_nested_placements_have_analytic_world_bounds(
     nested_box, rotation_deg, expected
 ):
-    # A half turn is its own inverse, so this also checks a supported GDML
-    # rotation without legitimising the known +/-90-degree convention error.
+    # Geant4 G4GDMLReadStructure::PhysvolRead constructs an inverse rotation:
+    # a quarter turn sends the child (5,0,0) to (0,-5,0), not (0,5,0), before
+    # adding the parent offset (10,20,30).
     scene = scene_builder(nested_box(rotation_deg)).build()
     assert scene["meta"]["objects"] == 1
     assert scene["meta"]["warnings"] == []

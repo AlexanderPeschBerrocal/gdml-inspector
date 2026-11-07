@@ -89,11 +89,12 @@ assemblies, replicas, expressions, and several other GDML constructs are not
 fully supported. Some unsupported constructs currently produce no warning.
 
 The optional backend improves solid tessellation but uses the same local XML
-placement traversal. It does not make the entire GDML reader complete. The
-inherited parser's unit and rotation conventions also need consolidation with
-ROOT Explorer's more mature implementation. See [limitations](docs/limitations.md)
-before interpreting a geometry. These rendered meshes are not quantitative
-material maps or authoritative geometry validation.
+placement traversal. It does not make the entire GDML reader complete. Physvol
+placement rotation now matches Geant4's inverse convention used by ROOT
+Explorer; the inherited parser's unitless solid-angle default still needs
+consolidation. See [limitations](docs/limitations.md) before interpreting a
+geometry. These rendered meshes are not quantitative material maps or
+authoritative geometry validation.
 
 Use `--quality fast|medium|high`, `--max-objects`, and `--max-vertices` to control
 export size; lazy mode also provides `--chunk-vertices`. See
