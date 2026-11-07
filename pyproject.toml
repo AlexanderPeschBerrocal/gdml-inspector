@@ -18,8 +18,24 @@ Issues = "https://github.com/AlexanderPeschBerrocal/gdml-inspector/issues"
 
 [project.optional-dependencies]
 pyg4ometry = ["pyg4ometry"]
+
+# Development tools are local dependency groups, not published package extras.
+[dependency-groups]
 test = ["pytest>=8,<10"]
-dev = ["pytest>=8,<10", "build>=1.2", "ruff>=0.9"]
+lint = ["ruff==0.16.5"]
+build = ["build>=1.2", "setuptools==84.2.1", "wheel==0.48.0"]
+dev = [
+    { include-group = "test" },
+    { include-group = "lint" },
+    { include-group = "build" },
+]
+
+[tool.uv]
+# Match CI and the documented installation command; upgrades are deliberate.
+required-version = "==0.13.6"
+# Editable/isolated uv builds use the same backend versions as the build group.
+# Ordinary pip users retain the compatibility ranges in [build-system].
+build-constraint-dependencies = ["setuptools==84.2.1", "wheel==0.48.0"]
 
 [project.scripts]
 gdml-inspector = "gdml_inspector.cli:main"

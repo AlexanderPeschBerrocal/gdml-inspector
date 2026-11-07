@@ -7,22 +7,43 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ['3.10', '3.12', '3.14']
+        # The development pin does not restrict the package's supported range.
+        python: ['3.10', '3.11', '3.12.16', '3.13', '3.14']
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Install the project uv version
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          python-version: ${{ matrix.python }}
-      - run: python -m pip install '.[dev]'
-      - run: python -m pytest
-      - run: ruff check .
-      - run: python -m build
+          version: '0.13.6'
+          enable-cache: true
+      - name: Verify project metadata and lock agree
+        run: uv lock --check
+      - name: Install the locked development environment
+        run: uv sync --locked
+      - run: uv run --no-sync pytest
+      - run: uv run --no-sync ruff check .
+      - name: Build with the locked build tools
+        run: uv run --no-sync python -m build --no-isolation
       - name: Verify the wheel outside the checkout
         shell: bash
         run: |
-          python -m venv /tmp/inspector-wheel
-          /tmp/inspector-wheel/bin/python -m pip install --no-deps dist/*.whl
+          uv venv /tmp/inspector-wheel
+          # Resolve the wheel's public metadata independently of uv.lock.
+          uv pip install --python /tmp/inspector-wheel/bin/python dist/*.whl
+          uv pip check --python /tmp/inspector-wheel/bin/python
           cd /tmp
+          /tmp/inspector-wheel/bin/python -I - <<'PY'
+          from importlib.metadata import distribution
+
+          package = distribution("gdml-inspector")
+          assert package.metadata.get_all("Provides-Extra") == ["pyg4ometry"]
+          requirements = package.requires or []
+          assert len(requirements) == 1
+          assert requirements[0].startswith("pyg4ometry;")
+          assert "extra ==" in requirements[0]
+          PY
           /tmp/inspector-wheel/bin/gdml-inspector --version
           /tmp/inspector-wheel/bin/gdml-inspector "$GITHUB_WORKSPACE/examples/detector.gdml" --backend python --out /tmp/detector.html
           /tmp/inspector-wheel/bin/gdml-inspector --lazy "$GITHUB_WORKSPACE/examples/detector.gdml" --backend python --out /tmp/detector-lazy.html
