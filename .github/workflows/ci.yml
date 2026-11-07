@@ -1,0 +1,28 @@
+name: Tests and distribution
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.12', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install '.[dev]'
+      - run: python -m pytest
+      - run: ruff check .
+      - run: python -m build
+      - name: Verify the wheel outside the checkout
+        shell: bash
+        run: |
+          python -m venv /tmp/inspector-wheel
+          /tmp/inspector-wheel/bin/python -m pip install --no-deps dist/*.whl
+          cd /tmp
+          /tmp/inspector-wheel/bin/gdml-inspector --version
+          /tmp/inspector-wheel/bin/gdml-inspector "$GITHUB_WORKSPACE/examples/detector.gdml" --backend python --out /tmp/detector.html
+          /tmp/inspector-wheel/bin/gdml-inspector --lazy "$GITHUB_WORKSPACE/examples/detector.gdml" --backend python --out /tmp/detector-lazy.html

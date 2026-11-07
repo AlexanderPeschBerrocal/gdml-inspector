@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GDML Inspector — Lazy — __TITLE__</title>
+<style>
+:root { color-scheme: light dark; font-family: Inter, system-ui, sans-serif; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+body { display: grid; grid-template-columns: 360px 1fr; background: #07111f; color: #e6edf7; }
+aside { overflow: auto; padding: 14px; background: #0e1b2b; border-right: 1px solid #2b3b50; }
+main { position: relative; min-width: 0; }
+canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+canvas:active { cursor: grabbing; }
+h1 { font-size: 17px; margin: 0 0 4px; }
+h2 { font-size: 13px; margin: 16px 0 7px; color: #9fc5ff; text-transform: uppercase; letter-spacing: .05em; }
+.muted { color: #9cafc6; font-size: 12px; line-height: 1.4; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
+.stat { background: #13243a; border-radius: 7px; padding: 7px 9px; }
+.stat span { display: block; color: #8fa6c0; font-size: 10px; }
+.stat b { font-size: 13px; }
+.row { display: flex; gap: 7px; align-items: center; margin: 6px 0; }
+.row label { flex: 1; font-size: 12px; }
+.camera-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.camera-actions button { font-size: 11px; padding: 5px 2px; }
+.axis-key { display: flex; gap: 10px; margin: 5px 0; font-size: 12px; font-weight: 700; }
+.axis-x { color: #ef4444; }
+.axis-y { color: #22c55e; }
+.axis-z { color: #3b82f6; }
+.axis-label { position: absolute; display: none; pointer-events: none; font-size: 13px; font-weight: 800; transform: translate(-50%, -50%); text-shadow: 0 0 3px #07111f, 0 0 3px #07111f; }
+button, select, input { accent-color: #65a5ff; }
+button { border: 1px solid #3b526e; color: #e9f2ff; background: #172c46; border-radius: 6px; padding: 6px 9px; cursor: pointer; }
+button:hover { background: #213c5e; }
+input[type=range] { width: 100%; }
+.subsystem { margin: 7px 0; border: 1px solid #2c4059; border-radius: 7px; overflow: hidden; }
+.subsystem-head { display: flex; align-items: center; gap: 7px; padding: 7px 8px; background: #152942; font-weight: 650; font-size: 13px; }
+.layers { padding: 4px 8px 7px 24px; }
+.layer { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
+.layer small { color: #8fa6c0; }
+.loading { color: #f4c76b; }
+.loaded { color: #74d99f; }
+.error { color: #ff8585; white-space: pre-wrap; }
+.material { display: grid; grid-template-columns: 12px 1fr auto; gap: 7px; align-items: center; font-size: 11px; margin: 3px 0; }
+.swatch { width: 11px; height: 11px; border-radius: 2px; }
+#overlay { position: absolute; right: 12px; top: 12px; background: #091626dd; border: 1px solid #314761; border-radius: 8px; padding: 8px 10px; font-size: 11px; pointer-events: none; }
+#warnings { max-height: 100px; overflow: auto; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>GDML Inspector — Lazy</h1>
+  <div class="muted" id="source"></div>
+  <div class="stats">
+    <div class="stat"><span>Total objects</span><b id="totalObjects"></b></div>
+    <div class="stat"><span>Total triangles</span><b id="totalTriangles"></b></div>
+    <div class="stat"><span>Loaded chunks</span><b id="loadedChunks">0</b></div>
+    <div class="stat"><span>Loaded binary</span><b id="loadedBytes">0 B</b></div>
+  </div>
+  <div class="row">
+    <button id="loadAll">Load all</button>
+    <button id="hideAll">Hide all</button>
+    <button id="resetView">Reset view</button>
+  </div>
+  <div class="row">
+    <label><input id="releaseHidden" type="checkbox" checked> Unload hidden layers</label>
+  </div>
+
+  <h2>View</h2>
+  <div class="camera-actions">
+    <button id="viewXYPos" title="Look toward the origin along -z">XY +Z</button>
+    <button id="viewXYNeg" title="Look toward the origin along +z">XY -Z</button>
+    <button id="viewXZPos" title="Look toward the origin along -y">XZ +Y</button>
+    <button id="viewXZNeg" title="Look toward the origin along +y">XZ -Y</button>
+    <button id="viewYZPos" title="Look toward the origin along -x">YZ +X</button>
+    <button id="viewYZNeg" title="Look toward the origin along +x">YZ -X</button>
+  </div>
+  <div class="row">
+    <label><input id="coordinateAxes" type="checkbox" checked> Coordinate axes</label>
+  </div>
+  <div class="axis-key"><span class="axis-x">X</span><span class="axis-y">Y</span><span class="axis-z">Z</span></div>
+
+  <h2>Subsystems and layers</h2>
+  <div id="geometryTree"></div>
+
+  <h2>Phi cutout</h2>
+  <div class="row"><label><input id="cutEnabled" type="checkbox"> Enable phi cut</label></div>
+  <div class="row"><label>Mode</label><select id="cutMode"><option value="remove">Remove wedge</option><option value="keep">Keep wedge only</option></select></div>
+  <label class="muted">Wedge start: <b id="cutStartValue">0°</b></label>
+  <input id="cutStart" type="range" min="-180" max="180" value="0" step="1">
+  <label class="muted">Wedge width: <b id="cutWidthValue">90°</b></label>
+  <input id="cutWidth" type="range" min="1" max="359" value="90" step="1">
+  <div class="row"><label>Opacity</label><input id="opacity" type="range" min="10" max="100" value="100"></div>
+
+  <h2>Materials</h2>
+  <div id="materials"></div>
+  <h2>Warnings</h2>
+  <div id="warnings" class="muted"></div>
+  <h2>Status</h2>
+  <div id="status" class="muted">Select a layer to load it.</div>
+</aside>
+<main>
+  <canvas id="canvas"></canvas>
+  <span id="axisLabelX" class="axis-label axis-x">X</span>
+  <span id="axisLabelY" class="axis-label axis-y">Y</span>
+  <span id="axisLabelZ" class="axis-label axis-z">Z</span>
+  <div id="overlay">Drag: rotate · Shift+drag: pan · Wheel: zoom</div>
+</main>
+<script>
+const MANIFEST = __MANIFEST__;
+const canvas = document.getElementById('canvas');
+const gl = canvas.getContext('webgl', { antialias: true, alpha: false });
+if (!gl) throw new Error('WebGL is not available in this browser.');
+
+document.getElementById('source').textContent = `${MANIFEST.sourceFile} · ${MANIFEST.backend}/${MANIFEST.quality}`;
+document.getElementById('totalObjects').textContent = MANIFEST.objects.toLocaleString();
+document.getElementById('totalTriangles').textContent = MANIFEST.triangles.toLocaleString();
+document.getElementById('warnings').innerHTML = MANIFEST.warnings.length ? MANIFEST.warnings.map(x => `<div>${escapeHtml(x)}</div>`).join('') : 'No geometry warnings.';
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function formatBytes(n) {
+  const units=['B','KiB','MiB','GiB']; let i=0, v=n;
+  while (v>=1024 && i<units.length-1) { v/=1024; i++; }
+  return `${v.toFixed(i ? 1 : 0)} ${units[i]}`;
+}
+
+const states = Object.fromEntries(MANIFEST.chunks.map(c => [c.key, { loaded:false, loading:false, visible:false, error:'', buffers:null, bytes:0 }]));
+const selectedLayers = new Set();
+const layerChecks = new Map();
+const grouped = {};
+for (const chunk of MANIFEST.chunks) {
+  grouped[chunk.subsystem] ??= {};
+  grouped[chunk.subsystem][chunk.layer] ??= [];
+  grouped[chunk.subsystem][chunk.layer].push(chunk);
+}
+
+function buildTree() {
+  const root = document.getElementById('geometryTree');
+  root.innerHTML = '';
+  for (const [subsystem, layers] of Object.entries(grouped)) {
+    const box=document.createElement('div'); box.className='subsystem';
+    const head=document.createElement('label'); head.className='subsystem-head';
+    const subCheck=document.createElement('input'); subCheck.type='checkbox'; subCheck.dataset.subsystem=subsystem;
+    head.append(subCheck, document.createTextNode(subsystem)); box.append(head);
+    const layerBox=document.createElement('div'); layerBox.className='layers';
+    for (const [layer, chunks] of Object.entries(layers)) {
+      const key=`${subsystem}\x1f${layer}`;
+      const label=document.createElement('label'); label.className='layer';
+      const check=document.createElement('input'); check.type='checkbox'; check.dataset.layerKey=key;
+      layerChecks.set(key,check);
+      const text=document.createElement('span'); text.textContent=layer;
+      const count=document.createElement('small');
+      count.textContent=`${chunks.reduce((s,c)=>s+c.triangles,0).toLocaleString()} △`;
+      label.append(check,text,count); layerBox.append(label);
+      check.addEventListener('change', () => setLayer(key, check.checked));
+    }
+    let changeSequence=0;
+    subCheck.addEventListener('change', async () => {
+      const checks=[...layerBox.querySelectorAll('input[data-layer-key]')];
+      const enabled=subCheck.checked;
+      const sequence=++changeSequence;
+      for (const check of checks) check.checked=enabled;
+      for (const check of checks) {
+        if (sequence!==changeSequence) return;
+        await setLayer(check.dataset.layerKey,enabled);
+      }
+      if (sequence===changeSequence) syncSubsystemChecks();
+    });
+    box.append(layerBox); root.append(box);
+  }
+}
+
+async function setLayer(baseKey, enabled) {
+  if (enabled) selectedLayers.add(baseKey); else selectedLayers.delete(baseKey);
+  const chunks=MANIFEST.chunks.filter(c => c.baseKey===baseKey);
+  if (enabled) {
+    await Promise.all(chunks.map(loadChunk));
+    const stillEnabled=selectedLayers.has(baseKey);
+    for (const chunk of chunks) if (states[chunk.key].loaded) states[chunk.key].visible=stillEnabled;
+  } else {
+    for (const chunk of chunks) {
+      states[chunk.key].visible=false;
+      if (document.getElementById('releaseHidden').checked) unloadChunk(chunk);
+    }
+  }
+  syncSubsystemChecks(); updateStats(); requestRender();
+}
+
+async function loadChunk(chunk) {
+  const state=states[chunk.key];
+  if (state.loaded || state.loading) return;
+  state.loading=true; state.error=''; updateStatus(`Loading ${chunk.subsystem} / ${chunk.layer}…`, 'loading');
+  try {
+    const response=await fetch(chunk.url);
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const data=await response.arrayBuffer();
+    const view=new DataView(data);
+    const magic=String.fromCharCode(...new Uint8Array(data,0,8));
+    if (magic!=='GDMLCHN1') throw new Error(`Bad chunk magic in ${chunk.url}`);
+    const version=view.getUint32(8,true), vertices=view.getUint32(12,true);
+    if (version!==1) throw new Error(`Unsupported chunk version ${version}`);
+    const posOff=view.getUint32(16,true), colorOff=view.getUint32(20,true), idOff=view.getUint32(24,true), endOff=view.getUint32(28,true);
+    if (endOff!==data.byteLength) throw new Error(`Truncated chunk ${chunk.url}`);
+    const positions=new Float32Array(data,posOff,vertices*3);
+    const colors=new Uint8Array(data,colorOff,vertices*4);
+    state.buffers={
+      pos:makeBuffer(positions),
+      color:makeBuffer(colors),
+      count:vertices,
+    };
+    state.loaded=true; state.visible=selectedLayers.has(chunk.baseKey); state.bytes=data.byteLength;
+    updateStatus(`Loaded ${chunk.subsystem} / ${chunk.layer}.`, 'loaded');
+  } catch (error) {
+    state.error=String(error); updateStatus(`Could not load ${chunk.url}.\n${error}\nUse --serve or another HTTP server; file:// cannot fetch lazy chunks.`, 'error');
+  } finally {
+    state.loading=false; updateStats(); requestRender();
+  }
+}
+
+function unloadChunk(chunk) {
+  const state=states[chunk.key];
+  if (!state.loaded || !state.buffers) return;
+  gl.deleteBuffer(state.buffers.pos); gl.deleteBuffer(state.buffers.color);
+  state.loaded=false; state.buffers=null; state.bytes=0;
+}
+function updateStatus(text, cls='') { const el=document.getElementById('status'); el.textContent=text; el.className=`muted ${cls}`; }
+function updateStats() {
+  const loaded=Object.values(states).filter(s=>s.loaded);
+  document.getElementById('loadedChunks').textContent=`${loaded.length}/${MANIFEST.chunks.length}`;
+  document.getElementById('loadedBytes').textContent=formatBytes(loaded.reduce((s,x)=>s+x.bytes,0));
+}
+function syncSubsystemChecks() {
+  document.querySelectorAll('input[data-subsystem]').forEach(sub => {
+    const keys=Object.keys(grouped[sub.dataset.subsystem]).map(layer=>`${sub.dataset.subsystem}\x1f${layer}`);
+    const n=keys.filter(key=>selectedLayers.has(key)).length;
+    sub.checked=n===keys.length; sub.indeterminate=n>0 && n<keys.length;
+  });
+}
+
+function shader(type, source) {
+  const value=gl.createShader(type); gl.shaderSource(value,source); gl.compileShader(value);
+  if (!gl.getShaderParameter(value,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(value));
+  return value;
+}
+const vertexShader=shader(gl.VERTEX_SHADER, `
+attribute vec3 a_pos; attribute vec4 a_color;
+uniform mat4 u_mvp; varying vec4 v_color; varying vec3 v_world;
+void main() { v_world=a_pos; v_color=a_color; gl_Position=u_mvp*vec4(a_pos,1.0); }
+`);
+const fragmentShader=shader(gl.FRAGMENT_SHADER, `
+precision mediump float; varying vec4 v_color; varying vec3 v_world;
+uniform float u_opacity, u_cut_enabled, u_cut_start, u_cut_width, u_cut_mode;
+const float TWO_PI=6.28318530718;
+void main() {
+  if (u_cut_enabled>0.5) {
+    float phi=atan(v_world.y,v_world.x); if (phi<0.0) phi+=TWO_PI;
+    float relative=mod(phi-u_cut_start+TWO_PI,TWO_PI);
+    bool inside=relative<=u_cut_width;
+    if ((u_cut_mode<0.5 && inside) || (u_cut_mode>0.5 && !inside)) discard;
+  }
+  gl_FragColor=vec4(v_color.rgb,v_color.a*u_opacity);
+}
+`);
+const program=gl.createProgram(); gl.attachShader(program,vertexShader); gl.attachShader(program,fragmentShader); gl.linkProgram(program);
+if (!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+const locations={
+  pos:gl.getAttribLocation(program,'a_pos'), color:gl.getAttribLocation(program,'a_color'),
+  mvp:gl.getUniformLocation(program,'u_mvp'), opacity:gl.getUniformLocation(program,'u_opacity'),
+  cutEnabled:gl.getUniformLocation(program,'u_cut_enabled'), cutStart:gl.getUniformLocation(program,'u_cut_start'),
+  cutWidth:gl.getUniformLocation(program,'u_cut_width'), cutMode:gl.getUniformLocation(program,'u_cut_mode'),
+};
+function makeBuffer(values) { const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,values,gl.STATIC_DRAW); return b; }
+
+const bbox=MANIFEST.bbox;
+const center=[(bbox[0]+bbox[3])/2,(bbox[1]+bbox[4])/2,(bbox[2]+bbox[5])/2];
+const radius=Math.hypot(bbox[3]-bbox[0],bbox[4]-bbox[1],bbox[5]-bbox[2])||1;
+const axisLength=radius*.18;
+const axisPositions=new Float32Array([
+  0,0,0, axisLength,0,0,
+  0,0,0, 0,axisLength,0,
+  0,0,0, 0,0,axisLength,
+]);
+const axisColors=new Uint8Array([
+  239,68,68,255, 239,68,68,255,
+  34,197,94,255, 34,197,94,255,
+  59,130,246,255, 59,130,246,255,
+]);
+const axisPosBuffer=makeBuffer(axisPositions);
+const axisColorBuffer=makeBuffer(axisColors);
+let yaw=-0.65,pitch=0.45,dist=radius*1.35,panX=0,panY=0,renderPending=false;
+let cameraUp=[0,1,0];
+function mat4mul(a,b) { const o=new Float32Array(16); for(let r=0;r<4;r++)for(let c=0;c<4;c++)for(let k=0;k<4;k++)o[c*4+r]+=a[k*4+r]*b[c*4+k]; return o; }
+function perspective(fovy,aspect,near,far) { const f=1/Math.tan(fovy/2),nf=1/(near-far); return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*nf,-1,0,0,2*far*near*nf,0]); }
+function lookAt(eye,target,up) {
+  let zx=eye[0]-target[0],zy=eye[1]-target[1],zz=eye[2]-target[2],zl=Math.hypot(zx,zy,zz); zx/=zl;zy/=zl;zz/=zl;
+  let xx=up[1]*zz-up[2]*zy,xy=up[2]*zx-up[0]*zz,xz=up[0]*zy-up[1]*zx,xl=Math.hypot(xx,xy,xz); xx/=xl;xy/=xl;xz/=xl;
+  const yx=zy*xz-zz*xy,yy=zz*xx-zx*xz,yz=zx*xy-zy*xx;
+  return new Float32Array([xx,yx,zx,0,xy,yy,zy,0,xz,yz,zz,0,-(xx*eye[0]+xy*eye[1]+xz*eye[2]),-(yx*eye[0]+yy*eye[1]+yz*eye[2]),-(zx*eye[0]+zy*eye[1]+zz*eye[2]),1]);
+}
+function resize() { const dpr=window.devicePixelRatio||1,w=Math.floor(canvas.clientWidth*dpr),h=Math.floor(canvas.clientHeight*dpr); if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);} }
+function requestRender() { if(renderPending)return; renderPending=true; requestAnimationFrame(render); }
+function updateAxisLabels(mvp,enabled) {
+  const endpoints=[
+    ['axisLabelX',axisLength,0,0],
+    ['axisLabelY',0,axisLength,0],
+    ['axisLabelZ',0,0,axisLength],
+  ];
+  for (const [id,x,y,z] of endpoints) {
+    const label=document.getElementById(id);
+    const tx=mvp[0]*x+mvp[4]*y+mvp[8]*z+mvp[12];
+    const ty=mvp[1]*x+mvp[5]*y+mvp[9]*z+mvp[13];
+    const tw=mvp[3]*x+mvp[7]*y+mvp[11]*z+mvp[15];
+    if (!enabled||tw<=0) { label.style.display='none'; continue; }
+    label.style.display='block';
+    label.style.left=((tx/tw*.5+.5)*canvas.clientWidth)+'px';
+    label.style.top=((-ty/tw*.5+.5)*canvas.clientHeight)+'px';
+  }
+}
+function render() {
+  renderPending=false; resize(); gl.clearColor(0.027,0.067,0.122,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+  const opacity=+document.getElementById('opacity').value/100; gl.depthMask(opacity>=0.999);
+  const cx=center[0]+panX,cy=center[1]+panY,cz=center[2];
+  const eye=[cx+dist*Math.cos(pitch)*Math.sin(yaw),cy+dist*Math.sin(pitch),cz+dist*Math.cos(pitch)*Math.cos(yaw)];
+  const mvp=mat4mul(perspective(45*Math.PI/180,canvas.width/canvas.height,radius/1000,radius*30),lookAt(eye,[cx,cy,cz],cameraUp));
+  gl.useProgram(program); gl.uniformMatrix4fv(locations.mvp,false,mvp); gl.uniform1f(locations.opacity,opacity);
+  const enabled=document.getElementById('cutEnabled').checked;
+  const start=(+document.getElementById('cutStart').value*Math.PI/180+Math.PI*2)%(Math.PI*2);
+  const width=+document.getElementById('cutWidth').value*Math.PI/180;
+  gl.uniform1f(locations.cutEnabled,enabled?1:0); gl.uniform1f(locations.cutStart,start); gl.uniform1f(locations.cutWidth,width);
+  gl.uniform1f(locations.cutMode,document.getElementById('cutMode').value==='keep'?1:0);
+  for (const chunk of MANIFEST.chunks) {
+    const state=states[chunk.key]; if(!state.loaded||!state.visible||!state.buffers)continue;
+    gl.bindBuffer(gl.ARRAY_BUFFER,state.buffers.pos); gl.enableVertexAttribArray(locations.pos); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,state.buffers.color); gl.enableVertexAttribArray(locations.color); gl.vertexAttribPointer(locations.color,4,gl.UNSIGNED_BYTE,true,0,0);
+    gl.drawArrays(gl.TRIANGLES,0,state.buffers.count);
+  }
+  const axesEnabled=document.getElementById('coordinateAxes').checked;
+  if (axesEnabled) {
+    gl.disable(gl.DEPTH_TEST);
+    gl.uniform1f(locations.opacity,1);
+    gl.uniform1f(locations.cutEnabled,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,axisPosBuffer); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,axisColorBuffer); gl.vertexAttribPointer(locations.color,4,gl.UNSIGNED_BYTE,true,0,0);
+    gl.drawArrays(gl.LINES,0,6);
+  }
+  updateAxisLabels(mvp,axesEnabled);
+}
+
+let drag=null;
+canvas.addEventListener('mousedown',e=>drag={x:e.clientX,y:e.clientY,shift:e.shiftKey});
+window.addEventListener('mouseup',()=>drag=null);
+window.addEventListener('mousemove',e=>{ if(!drag)return; const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY; if(drag.shift){panX-=dx*dist/900;panY+=dy*dist/900;}else{yaw+=dx*.006;pitch=Math.max(-1.45,Math.min(1.45,pitch+dy*.006));cameraUp=[0,1,0];} requestRender(); });
+canvas.addEventListener('wheel',e=>{e.preventDefault();dist*=Math.exp(e.deltaY*.001);requestRender();},{passive:false});
+window.addEventListener('resize',requestRender);
+function setCamera(newYaw,newPitch,up) {
+  yaw=newYaw; pitch=newPitch; cameraUp=up; dist=radius*1.35; panX=panY=0; requestRender();
+}
+document.getElementById('resetView').onclick=()=>setCamera(-.65,.45,[0,1,0]);
+document.getElementById('viewXYPos').onclick=()=>setCamera(0,0,[0,1,0]);
+document.getElementById('viewXYNeg').onclick=()=>setCamera(Math.PI,0,[0,1,0]);
+document.getElementById('viewXZPos').onclick=()=>setCamera(0,Math.PI/2,[0,0,1]);
+document.getElementById('viewXZNeg').onclick=()=>setCamera(0,-Math.PI/2,[0,0,1]);
+document.getElementById('viewYZPos').onclick=()=>setCamera(Math.PI/2,0,[0,0,1]);
+document.getElementById('viewYZNeg').onclick=()=>setCamera(-Math.PI/2,0,[0,0,1]);
+document.getElementById('coordinateAxes').addEventListener('change',requestRender);
+for (const id of ['cutEnabled','cutMode','cutStart','cutWidth','opacity']) document.getElementById(id).addEventListener('input',()=>{
+  document.getElementById('cutStartValue').textContent=`${document.getElementById('cutStart').value}°`;
+  document.getElementById('cutWidthValue').textContent=`${document.getElementById('cutWidth').value}°`; requestRender();
+});
+document.getElementById('loadAll').onclick=async()=>{ for(const check of document.querySelectorAll('input[data-layer-key]'))check.checked=true; for(const key of Object.keys(grouped).flatMap(s=>Object.keys(grouped[s]).map(l=>`${s}\x1f${l}`)))await setLayer(key,true); };
+document.getElementById('hideAll').onclick=async()=>{ for(const check of document.querySelectorAll('input[data-layer-key]'))check.checked=false; for(const key of [...selectedLayers])await setLayer(key,false); };
+
+function renderMaterials() {
+  const root=document.getElementById('materials');
+  root.innerHTML=Object.entries(MANIFEST.materials).map(([name,count])=>{const c=MANIFEST.materialColors[name]||[128,128,128,255];return `<div class="material"><span class="swatch" style="background:rgba(${c[0]},${c[1]},${c[2]},${Math.max(c[3]/255,.35)})"></span><span title="${escapeHtml(name)}">${escapeHtml(name)}</span><span>${count.toLocaleString()}</span></div>`;}).join('');
+}
+
+buildTree(); renderMaterials(); updateStats(); requestRender();
+for (const requested of MANIFEST.defaultLoad) {
+  for (const [subsystem,layers] of Object.entries(grouped)) {
+    if (requested.toLowerCase()!==subsystem.toLowerCase() && requested.toLowerCase()!=='all') continue;
+    for (const layer of Object.keys(layers)) { const key=`${subsystem}\x1f${layer}`; const check=layerChecks.get(key); if(check)check.checked=true; setLayer(key,true); }
+  }
+}
+</script>
+</body>
+</html>

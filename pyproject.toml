@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gdml-inspector"
+version = "0.1.0"
+description = "Inspect and share Geant4 GDML geometries in a browser"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "Alexander Pesch Berrocal"}]
+keywords = ["GDML", "Geant4", "geometry", "HEP", "WebGL"]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/AlexanderPeschBerrocal/gdml-inspector"
+Issues = "https://github.com/AlexanderPeschBerrocal/gdml-inspector/issues"
+
+[project.optional-dependencies]
+pyg4ometry = ["pyg4ometry"]
+test = ["pytest>=8,<10"]
+dev = ["pytest>=8,<10", "build>=1.2", "ruff>=0.9"]
+
+[project.scripts]
+gdml-inspector = "gdml_inspector.cli:main"
+gdml-inspector-lazy = "gdml_inspector.cli:lazy_main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"gdml_inspector.assets" = ["*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

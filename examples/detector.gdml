@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Small, original fixture: all dimensions in mm; inline numeric placements. -->
+<gdml>
+  <materials>
+    <material name="Galactic" Z="1"><D value="1e-25" unit="g/cm3"/><atom value="1.01"/></material>
+    <material name="G4_Si" Z="14"><D value="2.33" unit="g/cm3"/><atom value="28.0855"/></material>
+    <material name="G4_Fe" Z="26"><D value="7.874" unit="g/cm3"/><atom value="55.845"/></material>
+  </materials>
+  <solids>
+    <box name="world_box" x="1000" y="1000" z="1600" lunit="mm"/>
+    <tube name="pixel_barrel" rmin="30" rmax="32" z="300" startphi="0" deltaphi="360" aunit="deg" lunit="mm"/>
+    <tube name="strip_barrel" rmin="90" rmax="93" z="600" startphi="0" deltaphi="360" aunit="deg" lunit="mm"/>
+    <tube name="pixel_disk" rmin="30" rmax="110" z="3" startphi="0" deltaphi="360" aunit="deg" lunit="mm"/>
+    <tube name="support_tube" rmin="140" rmax="145" z="800" startphi="0" deltaphi="360" aunit="deg" lunit="mm"/>
+  </solids>
+  <structure>
+    <volume name="pixel"><materialref ref="G4_Si"/><solidref ref="pixel_barrel"/></volume>
+    <volume name="strip"><materialref ref="G4_Si"/><solidref ref="strip_barrel"/></volume>
+    <volume name="pixel_endcap"><materialref ref="G4_Si"/><solidref ref="pixel_disk"/></volume>
+    <volume name="support"><materialref ref="G4_Fe"/><solidref ref="support_tube"/></volume>
+    <volume name="world">
+      <materialref ref="Galactic"/><solidref ref="world_box"/>
+      <physvol name="pixel_barrel"><volumeref ref="pixel"/></physvol>
+      <physvol name="strip_barrel"><volumeref ref="strip"/></physvol>
+      <physvol name="pixel_endcap_plus"><volumeref ref="pixel_endcap"/><position x="0" y="0" z="350" unit="mm"/></physvol>
+      <physvol name="pixel_endcap_minus"><volumeref ref="pixel_endcap"/><position x="0" y="0" z="-350" unit="mm"/></physvol>
+      <physvol name="support"><volumeref ref="support"/></physvol>
+    </volume>
+  </structure>
+  <setup name="Default" version="1.0"><world ref="world"/></setup>
+</gdml>

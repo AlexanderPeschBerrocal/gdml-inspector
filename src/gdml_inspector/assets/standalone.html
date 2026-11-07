@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GDML Inspector - __TITLE__</title>
+<style>
+html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+body {
+  --bg: #f7f8fb; --panel: #ffffff; --text: #1d2430; --muted: #475569;
+  --border: #d9dde7; --soft: #f8fafc; --pill: #eef2ff; --canvas: #fbfcff;
+  --warn-bg: #fff7ed; --warn-border: #fed7aa; --hud: rgba(255,255,255,.86);
+  background: var(--bg); color: var(--text);
+}
+body.dark {
+  --bg: #0f172a; --panel: #111827; --text: #e5e7eb; --muted: #a3b1c6;
+  --border: #334155; --soft: #1f2937; --pill: #243044; --canvas: #08111f;
+  --warn-bg: #2b2115; --warn-border: #7c4a16; --hud: rgba(15,23,42,.86);
+}
+#app { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; height: 100%; }
+aside { border-right: 1px solid var(--border); padding: 14px; overflow: auto; background: var(--panel); }
+main { position: relative; min-width: 0; }
+canvas { display: block; width: 100%; height: 100%; background: var(--canvas); }
+h1 { font-size: 18px; margin: 0 0 10px; }
+h2 { font-size: 13px; margin: 18px 0 8px; color: var(--muted); }
+.stat { display: grid; grid-template-columns: 1fr auto; gap: 8px; font-size: 13px; margin: 3px 0; }
+input, select, button { width: 100%; box-sizing: border-box; margin: 5px 0; color: var(--text); background: var(--soft); border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+button { cursor: pointer; }
+input[type=checkbox] { width: auto; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row > * { flex: 1; }
+.pill { display: inline-block; padding: 2px 7px; border-radius: 99px; background: var(--pill); margin: 2px; font-size: 12px; }
+.warn { background: var(--warn-bg); border: 1px solid var(--warn-border); padding: 8px; border-radius: 6px; font-size: 12px; max-height: 120px; overflow: auto; }
+#details { font-size: 12px; white-space: pre-wrap; background: var(--soft); padding: 8px; border-radius: 6px; max-height: 180px; overflow: auto; }
+#hud { position: absolute; left: 12px; bottom: 12px; background: var(--hud); padding: 8px 10px; border-radius: 6px; font-size: 12px; border: 1px solid var(--border); }
+.axis-label { position: absolute; display: none; pointer-events: none; font-size: 13px; font-weight: 800; transform: translate(-50%, -50%); text-shadow: 0 0 3px var(--panel), 0 0 3px var(--panel); }
+.material-list { display: grid; gap: 4px; max-height: 230px; overflow: auto; padding-right: 4px; }
+.material-item { display: grid; grid-template-columns: auto 18px 1fr auto; gap: 7px; align-items: center; font-size: 12px; padding: 3px 0; }
+.swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); }
+.small-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.camera-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.camera-actions button { font-size: 11px; padding: 5px 2px; }
+.axis-key { display: flex; gap: 10px; margin: 5px 0; font-size: 12px; font-weight: 700; }
+.axis-x { color: #ef4444; } .axis-y { color: #22c55e; } .axis-z { color: #3b82f6; }
+.range-value { flex: 0 0 48px; text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="app">
+<aside>
+  <h1>GDML Inspector</h1>
+  <div class="stat"><span>Source</span><b id="sourceName"></b></div>
+  <div class="stat"><span>Objects</span><b id="objCount"></b></div>
+  <div class="stat"><span>Triangles</span><b id="triCount"></b></div>
+  <div class="stat"><span>Vertices</span><b id="vertexCount"></b></div>
+  <div class="stat"><span>Backend</span><b id="backendName"></b></div>
+  <div class="stat"><span>Quality</span><b id="qualityName"></b></div>
+  <div class="stat"><span>World</span><b id="worldName"></b></div>
+  <h2>View</h2>
+  <button id="reset">Reset Camera</button>
+  <div class="camera-actions">
+    <button id="viewXYPos" title="Look toward the origin along -z">XY +Z</button>
+    <button id="viewXYNeg" title="Look toward the origin along +z">XY -Z</button>
+    <button id="viewXZPos" title="Look toward the origin along -y">XZ +Y</button>
+    <button id="viewXZNeg" title="Look toward the origin along +y">XZ -Y</button>
+    <button id="viewYZPos" title="Look toward the origin along -x">YZ +X</button>
+    <button id="viewYZNeg" title="Look toward the origin along +x">YZ -X</button>
+  </div>
+  <label class="row"><span>Opacity</span><input id="opacity" type="range" min="5" max="100" value="78"></label>
+  <label><input id="wireframe" type="checkbox"> Wireframe overlay</label>
+  <label><input id="coordinateAxes" type="checkbox" checked> Coordinate axes</label>
+  <div class="axis-key"><span class="axis-x">X</span><span class="axis-y">Y</span><span class="axis-z">Z</span></div>
+  <label><input id="darkMode" type="checkbox"> Dark mode</label>
+  <h2>Phi cutout</h2>
+  <label><input id="phiCutEnabled" type="checkbox"> Remove azimuthal wedge</label>
+  <label class="row"><span>Start phi</span><input id="phiCutStart" type="range" min="-180" max="180" value="-45" step="1"><span id="phiCutStartValue" class="range-value">-45°</span></label>
+  <label class="row"><span>Width</span><input id="phiCutWidth" type="range" min="0" max="359" value="90" step="1"><span id="phiCutWidthValue" class="range-value">90°</span></label>
+  <div style="font-size:11px;color:var(--muted)">The wedge is measured counter-clockwise about global +z from its start angle.</div>
+  <h2>Filter</h2>
+  <input id="search" placeholder="Search name, material, solid...">
+  <select id="solidType"></select>
+  <h2>Materials</h2>
+  <div class="small-actions"><button id="allMaterials">All</button><button id="noMaterials">None</button></div>
+  <div id="materials"></div>
+  <h2>Picked Object</h2>
+  <div id="details">Click a point in the detector view.</div>
+  <h2>Accuracy Notes</h2>
+  <div class="warn" id="warnings"></div>
+</aside>
+<main>
+  <canvas id="gl"></canvas>
+  <span id="axisLabelX" class="axis-label axis-x">X</span>
+  <span id="axisLabelY" class="axis-label axis-y">Y</span>
+  <span id="axisLabelZ" class="axis-label axis-z">Z</span>
+  <div id="hud">Drag rotate. Wheel zoom. Shift-drag pan. Click inspect.</div>
+</main>
+</div>
+<script>
+const SCENE = __SCENE__;
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl', {antialias: true, alpha: false});
+if (!gl) alert('WebGL is not available in this browser.');
+document.getElementById('sourceName').textContent = SCENE.meta.sourceFile || (SCENE.meta.source || '').split('/').pop();
+document.getElementById('objCount').textContent = SCENE.meta.objects.toLocaleString();
+document.getElementById('triCount').textContent = SCENE.meta.triangles.toLocaleString();
+document.getElementById('vertexCount').textContent = SCENE.meta.vertices.toLocaleString();
+document.getElementById('backendName').textContent = SCENE.meta.backend || 'unknown';
+document.getElementById('qualityName').textContent = SCENE.meta.quality || 'unknown';
+document.getElementById('worldName').textContent = SCENE.meta.world;
+document.getElementById('warnings').innerHTML = SCENE.meta.warnings.length ? SCENE.meta.warnings.map(x => `<div>${x}</div>`).join('') : 'No geometry warnings.';
+
+const positions = new Float32Array(SCENE.positions);
+const colorsRaw = new Uint8Array(SCENE.colors);
+const ids = new Uint32Array(SCENE.ids);
+const colors = new Float32Array(colorsRaw.length);
+for (let i=0; i<colorsRaw.length; i++) colors[i] = colorsRaw[i] / 255;
+const visible = new Float32Array(ids.length);
+visible.fill(1);
+let objectVisible = SCENE.objects.map(() => 1);
+const materialNames = Object.keys(SCENE.meta.materials).sort();
+const materialEnabled = Object.fromEntries(materialNames.map(name => [name, true]));
+
+function fillSelect(id, title, values) {
+  const el = document.getElementById(id);
+  el.innerHTML = `<option value="">All ${title}</option>` + values.map(v => `<option value="${v}">${v}</option>`).join('');
+}
+fillSelect('solidType', 'solid types', Object.keys(SCENE.meta.solidTypes).sort());
+
+function materialColor(name) {
+  const c = (SCENE.meta.materialColors && SCENE.meta.materialColors[name]) || [128,128,128,200];
+  return `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${Math.max(c[3] / 255, 0.35)})`;
+}
+function renderMaterialToggles() {
+  const box = document.getElementById('materials');
+  box.className = 'material-list';
+  box.innerHTML = materialNames.map(name => `
+    <label class="material-item">
+      <input type="checkbox" data-material="${name}" ${materialEnabled[name] ? 'checked' : ''}>
+      <span class="swatch" style="background:${materialColor(name)}"></span>
+      <span title="${name}">${name}</span>
+      <span>${SCENE.meta.materials[name].toLocaleString()}</span>
+    </label>
+  `).join('');
+  box.querySelectorAll('input[data-material]').forEach(input => {
+    input.addEventListener('change', () => {
+      materialEnabled[input.dataset.material] = input.checked;
+      applyFilters();
+    });
+  });
+}
+renderMaterialToggles();
+
+function shader(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const vs = shader(gl.VERTEX_SHADER, `
+attribute vec3 a_pos; attribute vec4 a_col; attribute float a_vis;
+uniform mat4 u_mvp; uniform float u_opacity;
+varying vec4 v_col; varying vec3 v_pos;
+void main() {
+  gl_Position = u_mvp * vec4(a_pos, 1.0);
+  v_col = vec4(a_col.rgb, a_col.a * u_opacity * a_vis);
+  v_pos = a_pos;
+}`);
+const fs = shader(gl.FRAGMENT_SHADER, `
+precision mediump float; varying vec4 v_col; varying vec3 v_pos;
+uniform float u_phi_cut_enabled; uniform float u_phi_cut_start; uniform float u_phi_cut_width;
+void main() {
+  if (v_col.a < 0.01) discard;
+  if (u_phi_cut_enabled > 0.5 && u_phi_cut_width > 0.0) {
+    const float two_pi = 6.28318530718;
+    float relative_phi = mod(atan(v_pos.y, v_pos.x) - u_phi_cut_start + two_pi, two_pi);
+    if (relative_phi <= u_phi_cut_width) discard;
+  }
+  gl_FragColor = v_col;
+}`);
+const prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog); gl.useProgram(prog);
+const locPos = gl.getAttribLocation(prog, 'a_pos');
+const locCol = gl.getAttribLocation(prog, 'a_col');
+const locVis = gl.getAttribLocation(prog, 'a_vis');
+function makeBuffer(data, usage=gl.DYNAMIC_DRAW) {
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, usage);
+  return buf;
+}
+function setAttrib(loc, buf, size) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+}
+function bindArray(name, data, size) {
+  const loc = gl.getAttribLocation(prog, name);
+  const buf = makeBuffer(data);
+  setAttrib(loc, buf, size);
+  return buf;
+}
+const surfacePosBuf = bindArray('a_pos', positions, 3);
+const surfaceColBuf = bindArray('a_col', colors, 4);
+const visibleBuf = bindArray('a_vis', visible, 1);
+const uMvp = gl.getUniformLocation(prog, 'u_mvp');
+const uOpacity = gl.getUniformLocation(prog, 'u_opacity');
+const uPhiCutEnabled = gl.getUniformLocation(prog, 'u_phi_cut_enabled');
+const uPhiCutStart = gl.getUniformLocation(prog, 'u_phi_cut_start');
+const uPhiCutWidth = gl.getUniformLocation(prog, 'u_phi_cut_width');
+let wireBuffers = null;
+
+const bbox = SCENE.meta.bbox;
+const center = [(bbox[0]+bbox[3])/2, (bbox[1]+bbox[4])/2, (bbox[2]+bbox[5])/2];
+const radius = Math.hypot(bbox[3]-bbox[0], bbox[4]-bbox[1], bbox[5]-bbox[2]) || 1;
+const axisLength = radius * 0.18;
+const axisPositions = new Float32Array([
+  0,0,0, axisLength,0,0,
+  0,0,0, 0,axisLength,0,
+  0,0,0, 0,0,axisLength,
+]);
+const axisColors = new Float32Array([
+  0.94,0.16,0.16,1, 0.94,0.16,0.16,1,
+  0.10,0.78,0.30,1, 0.10,0.78,0.30,1,
+  0.12,0.42,0.96,1, 0.12,0.42,0.96,1,
+]);
+const axisVisible = new Float32Array(6); axisVisible.fill(1);
+const axisPosBuf = makeBuffer(axisPositions, gl.STATIC_DRAW);
+const axisColBuf = makeBuffer(axisColors, gl.STATIC_DRAW);
+const axisVisBuf = makeBuffer(axisVisible, gl.STATIC_DRAW);
+let yaw = -0.65, pitch = 0.45, dist = radius * 1.35, panX = 0, panY = 0;
+let cameraUp = [0,1,0];
+
+function mat4mul(a,b) {
+  const o = new Float32Array(16);
+  for (let r=0;r<4;r++) for (let c=0;c<4;c++) for (let k=0;k<4;k++) o[c*4+r] += a[k*4+r]*b[c*4+k];
+  return o;
+}
+function perspective(fovy, aspect, near, far) {
+  const f = 1/Math.tan(fovy/2), nf = 1/(near-far);
+  return new Float32Array([f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0]);
+}
+function lookAt(eye, target, up) {
+  let zx=eye[0]-target[0], zy=eye[1]-target[1], zz=eye[2]-target[2];
+  let zl=Math.hypot(zx,zy,zz); zx/=zl; zy/=zl; zz/=zl;
+  let xx=up[1]*zz-up[2]*zy, xy=up[2]*zx-up[0]*zz, xz=up[0]*zy-up[1]*zx;
+  let xl=Math.hypot(xx,xy,xz); xx/=xl; xy/=xl; xz/=xl;
+  let yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
+  return new Float32Array([xx,yx,zx,0, xy,yy,zy,0, xz,yz,zz,0, -(xx*eye[0]+xy*eye[1]+xz*eye[2]), -(yx*eye[0]+yy*eye[1]+yz*eye[2]), -(zx*eye[0]+zy*eye[1]+zz*eye[2]), 1]);
+}
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.floor(canvas.clientWidth*dpr), h = Math.floor(canvas.clientHeight*dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; gl.viewport(0,0,w,h); }
+}
+function themeIsDark() { return document.body.classList.contains('dark'); }
+function clearCanvas() {
+  if (themeIsDark()) gl.clearColor(0.031,0.067,0.122,1);
+  else gl.clearColor(0.985,0.99,1,1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+}
+function phiCutRadians() {
+  return {
+    enabled: document.getElementById('phiCutEnabled').checked,
+    start: +document.getElementById('phiCutStart').value * Math.PI / 180,
+    width: +document.getElementById('phiCutWidth').value * Math.PI / 180,
+  };
+}
+function pointIsPhiCut(x, y) {
+  const cut = phiCutRadians();
+  if (!cut.enabled || cut.width <= 0) return false;
+  const twoPi = 2*Math.PI;
+  const relative = ((Math.atan2(y, x) - cut.start) % twoPi + twoPi) % twoPi;
+  return relative <= cut.width;
+}
+function updateAxisLabels(mvp, enabled) {
+  const endpoints = [
+    ['axisLabelX', axisLength, 0, 0],
+    ['axisLabelY', 0, axisLength, 0],
+    ['axisLabelZ', 0, 0, axisLength],
+  ];
+  for (const [id, x, y, z] of endpoints) {
+    const label = document.getElementById(id);
+    const tx=mvp[0]*x+mvp[4]*y+mvp[8]*z+mvp[12];
+    const ty=mvp[1]*x+mvp[5]*y+mvp[9]*z+mvp[13];
+    const tw=mvp[3]*x+mvp[7]*y+mvp[11]*z+mvp[15];
+    if (!enabled || tw <= 0) { label.style.display='none'; continue; }
+    label.style.display='block';
+    label.style.left=((tx/tw*0.5+0.5)*canvas.clientWidth)+'px';
+    label.style.top=((-ty/tw*0.5+0.5)*canvas.clientHeight)+'px';
+  }
+}
+function buildWireBuffers() {
+  if (wireBuffers) return wireBuffers;
+  const triCount = positions.length / 9;
+  const linePositions = new Float32Array(triCount * 18);
+  const lineColors = new Float32Array(triCount * 24);
+  const lineIds = new Uint32Array(triCount * 6);
+  const lineVisible = new Float32Array(triCount * 6);
+  let p = 0, c = 0, n = 0;
+  for (let i = 0; i < positions.length; i += 9) {
+    const objId = ids[i / 3];
+    const edges = [0,1, 1,2, 2,0];
+    for (let e = 0; e < edges.length; e++) {
+      const v = i + edges[e] * 3;
+      linePositions[p++] = positions[v];
+      linePositions[p++] = positions[v + 1];
+      linePositions[p++] = positions[v + 2];
+      if (themeIsDark()) { lineColors[c++] = 1; lineColors[c++] = 1; lineColors[c++] = 1; lineColors[c++] = 0.42; }
+      else { lineColors[c++] = 0.02; lineColors[c++] = 0.04; lineColors[c++] = 0.08; lineColors[c++] = 0.35; }
+      lineIds[n] = objId;
+      lineVisible[n] = objectVisible[objId];
+      n++;
+    }
+  }
+  wireBuffers = {
+    positions: linePositions,
+    colors: lineColors,
+    ids: lineIds,
+    visible: lineVisible,
+    posBuf: makeBuffer(linePositions, gl.STATIC_DRAW),
+    colBuf: makeBuffer(lineColors),
+    visBuf: makeBuffer(lineVisible),
+  };
+  return wireBuffers;
+}
+function updateWireColors() {
+  if (!wireBuffers) return;
+  for (let i = 0; i < wireBuffers.colors.length; i += 4) {
+    if (themeIsDark()) {
+      wireBuffers.colors[i] = 1; wireBuffers.colors[i + 1] = 1; wireBuffers.colors[i + 2] = 1; wireBuffers.colors[i + 3] = 0.42;
+    } else {
+      wireBuffers.colors[i] = 0.02; wireBuffers.colors[i + 1] = 0.04; wireBuffers.colors[i + 2] = 0.08; wireBuffers.colors[i + 3] = 0.35;
+    }
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, wireBuffers.colBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, wireBuffers.colors, gl.DYNAMIC_DRAW);
+}
+function updateWireVisibility() {
+  if (!wireBuffers) return;
+  for (let i = 0; i < wireBuffers.ids.length; i++) wireBuffers.visible[i] = objectVisible[wireBuffers.ids[i]];
+  gl.bindBuffer(gl.ARRAY_BUFFER, wireBuffers.visBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, wireBuffers.visible, gl.DYNAMIC_DRAW);
+}
+function render() {
+  resize();
+  clearCanvas();
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.disable(gl.DEPTH_TEST);
+  const cx = center[0] + panX, cy = center[1] + panY, cz = center[2];
+  const eye = [cx + dist*Math.cos(pitch)*Math.sin(yaw), cy + dist*Math.sin(pitch), cz + dist*Math.cos(pitch)*Math.cos(yaw)];
+  const proj = perspective(45*Math.PI/180, canvas.width/canvas.height, radius/500, radius*20);
+  const view = lookAt(eye, [cx,cy,cz], cameraUp);
+  const mvp = mat4mul(proj, view);
+  gl.uniformMatrix4fv(uMvp, false, mvp);
+  setAttrib(locPos, surfacePosBuf, 3);
+  setAttrib(locCol, surfaceColBuf, 4);
+  setAttrib(locVis, visibleBuf, 1);
+  gl.uniform1f(uOpacity, +document.getElementById('opacity').value/100);
+  const phiCut = phiCutRadians();
+  gl.uniform1f(uPhiCutEnabled, phiCut.enabled ? 1 : 0);
+  gl.uniform1f(uPhiCutStart, phiCut.start);
+  gl.uniform1f(uPhiCutWidth, phiCut.width);
+  gl.drawArrays(gl.TRIANGLES, 0, positions.length/3);
+  if (document.getElementById('wireframe').checked) {
+    const wire = buildWireBuffers();
+    setAttrib(locPos, wire.posBuf, 3);
+    setAttrib(locCol, wire.colBuf, 4);
+    setAttrib(locVis, wire.visBuf, 1);
+    gl.uniform1f(uOpacity, 1.0);
+    gl.drawArrays(gl.LINES, 0, wire.positions.length/3);
+  }
+  const axesEnabled = document.getElementById('coordinateAxes').checked;
+  if (axesEnabled) {
+    setAttrib(locPos, axisPosBuf, 3);
+    setAttrib(locCol, axisColBuf, 4);
+    setAttrib(locVis, axisVisBuf, 1);
+    gl.uniform1f(uOpacity, 1.0);
+    gl.uniform1f(uPhiCutEnabled, 0.0);
+    gl.drawArrays(gl.LINES, 0, axisPositions.length/3);
+  }
+  updateAxisLabels(mvp, axesEnabled);
+  requestAnimationFrame(render);
+}
+render();
+
+let drag = null;
+canvas.addEventListener('mousedown', e => drag = {x:e.clientX, y:e.clientY, shift:e.shiftKey});
+window.addEventListener('mouseup', () => drag = null);
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY;
+  if (drag.shift) { panX -= dx*dist/900; panY += dy*dist/900; }
+  else { yaw += dx*0.006; pitch = Math.max(-1.55, Math.min(1.55, pitch + dy*0.006)); cameraUp = [0,1,0]; }
+});
+canvas.addEventListener('wheel', e => { e.preventDefault(); dist = Math.max(radius*0.01, Math.min(radius*50, dist*Math.exp(e.deltaY*0.001))); }, {passive:false});
+function setCamera(newYaw, newPitch, up) {
+  yaw=newYaw; pitch=newPitch; cameraUp=up; dist=radius*1.35; panX=0; panY=0;
+}
+document.getElementById('reset').onclick = () => setCamera(-0.65, 0.45, [0,1,0]);
+document.getElementById('viewXYPos').onclick = () => setCamera(0, 0, [0,1,0]);
+document.getElementById('viewXYNeg').onclick = () => setCamera(Math.PI, 0, [0,1,0]);
+document.getElementById('viewXZPos').onclick = () => setCamera(0, Math.PI/2, [0,0,1]);
+document.getElementById('viewXZNeg').onclick = () => setCamera(0, -Math.PI/2, [0,0,1]);
+document.getElementById('viewYZPos').onclick = () => setCamera(Math.PI/2, 0, [0,0,1]);
+document.getElementById('viewYZNeg').onclick = () => setCamera(-Math.PI/2, 0, [0,0,1]);
+['phiCutStart','phiCutWidth'].forEach(id => document.getElementById(id).addEventListener('input', () => {
+  document.getElementById(id + 'Value').textContent = document.getElementById(id).value + '°';
+}));
+document.getElementById('wireframe').addEventListener('change', () => { if (document.getElementById('wireframe').checked) buildWireBuffers(); });
+document.getElementById('darkMode').addEventListener('change', e => {
+  document.body.classList.toggle('dark', e.target.checked);
+  updateWireColors();
+});
+document.getElementById('allMaterials').onclick = () => {
+  materialNames.forEach(name => materialEnabled[name] = true);
+  renderMaterialToggles();
+  applyFilters();
+};
+document.getElementById('noMaterials').onclick = () => {
+  materialNames.forEach(name => materialEnabled[name] = false);
+  renderMaterialToggles();
+  applyFilters();
+};
+
+function applyFilters() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const solid = document.getElementById('solidType').value;
+  objectVisible = SCENE.objects.map(o => (materialEnabled[o.material] !== false) && (!solid || o.solidType === solid) && (!q || JSON.stringify(o).toLowerCase().includes(q)) ? 1 : 0);
+  for (let i=0; i<ids.length; i++) visible[i] = objectVisible[ids[i]];
+  gl.bindBuffer(gl.ARRAY_BUFFER, visibleBuf); gl.bufferData(gl.ARRAY_BUFFER, visible, gl.DYNAMIC_DRAW);
+  updateWireVisibility();
+}
+['search','solidType'].forEach(id => document.getElementById(id).addEventListener('input', applyFilters));
+
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect(), x = e.clientX-rect.left, y = e.clientY-rect.top;
+  let best=-1, bestD=14*14;
+  const aspect = canvas.width/canvas.height;
+  const cx = center[0] + panX, cy = center[1] + panY, cz = center[2];
+  const eye = [cx + dist*Math.cos(pitch)*Math.sin(yaw), cy + dist*Math.sin(pitch), cz + dist*Math.cos(pitch)*Math.cos(yaw)];
+  const mvp = mat4mul(perspective(45*Math.PI/180, aspect, radius/500, radius*20), lookAt(eye, [cx,cy,cz], cameraUp));
+  for (let i=0; i<positions.length; i+=30) {
+    const id = ids[i/3]; if (!visible[i/3]) continue;
+    const px=positions[i], py=positions[i+1], pz=positions[i+2];
+    if (pointIsPhiCut(px, py)) continue;
+    const tx=mvp[0]*px+mvp[4]*py+mvp[8]*pz+mvp[12], ty=mvp[1]*px+mvp[5]*py+mvp[9]*pz+mvp[13], tw=mvp[3]*px+mvp[7]*py+mvp[11]*pz+mvp[15];
+    if (tw <= 0) continue;
+    const sx=(tx/tw*0.5+0.5)*rect.width, sy=(-ty/tw*0.5+0.5)*rect.height;
+    const d=(sx-x)*(sx-x)+(sy-y)*(sy-y);
+    if (d < bestD) { bestD=d; best=id; }
+  }
+  if (best >= 0) document.getElementById('details').textContent = JSON.stringify(SCENE.objects[best], null, 2);
+});
+</script>
+</body>
+</html>
