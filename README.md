@@ -108,20 +108,31 @@ then use the committed lockfile:
 ```bash
 uv sync --locked
 uv run --no-sync pytest
-uv run --no-sync ruff check .
+uv run --no-sync python -m ruff check .
+uv run --no-sync python -m ruff format --check .
 uv run --no-sync python -m build --no-isolation
 ```
 
 `.python-version` selects Python 3.12.16 for development; the package still
 supports Python 3.10 and newer. The default `dev` group includes the separate
-`test`, `lint`, and `build` groups. Optional pyg4ometry is not installed unless
-requested with `uv sync --locked --extra pyg4ometry`. Ordinary pip installations
-continue to use the package metadata independently of `uv.lock`.
+`test`, `lint`, `build`, and `hooks` groups. Optional pyg4ometry is not installed
+unless requested with `uv sync --locked --extra pyg4ometry`. Ordinary pip
+installations continue to use the package metadata independently of `uv.lock`.
 
 See the [contributor guide](docs/contributing.md) for individual groups, pip
 development setup, dependency updates, compatibility checks, and the branch/PR
 workflow. Development tools are no longer exposed as `.[dev]` or `.[test]`
 package extras.
+
+To enable local lint/format fixes before each commit:
+
+```bash
+uv run --no-sync pre-commit install
+uv run --no-sync pre-commit run --all-files
+```
+
+Hooks use the locked Ruff offline without syncing the environment. After a hook
+changes a file, review the diff and stage it again before retrying the commit.
 
 The `src/gdml_inspector` package separates geometry/meshing, the optional backend,
 single-file and lazy exporters, local serving, and bundled HTML templates.

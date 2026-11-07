@@ -13,15 +13,15 @@ import sys
 import tempfile
 from array import array
 from collections import Counter, OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
 
-from . import __version__, geometry as base
+from . import __version__
+from . import geometry as base
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder
 from .server import serve_file
-
 
 MAGIC = b"GDMLCHN1"
 FORMAT_VERSION = 1
@@ -45,8 +45,8 @@ def canonical_material(name: str) -> str:
 
 
 def bbox_union(
-    target_min: List[float],
-    target_max: List[float],
+    target_min: list[float],
+    target_max: list[float],
     lo: Sequence[float],
     hi: Sequence[float],
 ) -> None:
@@ -62,7 +62,7 @@ def classify_chunk(
     hi: Sequence[float],
     radial_min: float,
     radial_max: float,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Return a human-readable subsystem and layer for one placed volume."""
 
     semantic_volume = base.semantic_name(volume.name)
@@ -127,8 +127,8 @@ class Chunk:
     positions: array = field(default_factory=lambda: array("f"))
     colors: array = field(default_factory=lambda: array("B"))
     object_count: int = 0
-    bbox_min: List[float] = field(default_factory=lambda: [float("inf")] * 3)
-    bbox_max: List[float] = field(default_factory=lambda: [float("-inf")] * 3)
+    bbox_min: list[float] = field(default_factory=lambda: [float("inf")] * 3)
+    bbox_max: list[float] = field(default_factory=lambda: [float("-inf")] * 3)
 
     @property
     def vertex_count(self) -> int:
@@ -153,8 +153,8 @@ class LazyBuilderMixin:
     def __init__(self, *args, chunk_vertices: int, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.chunk_vertices = max(3, int(chunk_vertices))
-        self.chunks: "OrderedDict[str, Chunk]" = OrderedDict()
-        self.chunk_parts: Dict[str, List[str]] = {}
+        self.chunks: OrderedDict[str, Chunk] = OrderedDict()
+        self.chunk_parts: dict[str, list[str]] = {}
         self.total_vertices = 0
         self.total_objects = 0
         self.material_counts: Counter[str] = Counter()
@@ -298,7 +298,7 @@ def write_chunk(chunk: Chunk, path: Path) -> int:
     return total_size
 
 
-def chunk_sort_key(chunk: Chunk) -> Tuple[int, str, int]:
+def chunk_sort_key(chunk: Chunk) -> tuple[int, str, int]:
     return SUBSYSTEM_ORDER.get(chunk.subsystem, 99), chunk.layer, chunk.part
 
 

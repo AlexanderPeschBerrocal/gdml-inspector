@@ -7,11 +7,10 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
-Vec3 = Tuple[float, float, float]
-Mat4 = List[List[float]]
-Triangle = Tuple[Vec3, Vec3, Vec3]
+Vec3 = tuple[float, float, float]
+Mat4 = list[list[float]]
+Triangle = tuple[Vec3, Vec3, Vec3]
 
 LEN_UNITS = {
     None: 1.0,
@@ -47,31 +46,31 @@ def tag_name(el: ET.Element | str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def child(el: ET.Element, name: str) -> Optional[ET.Element]:
+def child(el: ET.Element, name: str) -> ET.Element | None:
     for item in list(el):
         if tag_name(item) == name:
             return item
     return None
 
 
-def children(el: ET.Element, name: str) -> List[ET.Element]:
+def children(el: ET.Element, name: str) -> list[ET.Element]:
     return [item for item in list(el) if tag_name(item) == name]
 
 
-def f(attrs: Dict[str, str], key: str, default: float = 0.0) -> float:
+def f(attrs: dict[str, str], key: str, default: float = 0.0) -> float:
     try:
         return float(attrs.get(key, default))
     except (TypeError, ValueError):
         return default
 
 
-def length(attrs: Dict[str, str], key: str, default: float = 0.0) -> float:
+def length(attrs: dict[str, str], key: str, default: float = 0.0) -> float:
     return f(attrs, key, default) * LEN_UNITS.get(
         attrs.get("lunit") or attrs.get("unit"), 1.0
     )
 
 
-def angle(attrs: Dict[str, str], key: str, default_deg: float = 0.0) -> float:
+def angle(attrs: dict[str, str], key: str, default_deg: float = 0.0) -> float:
     return f(attrs, key, default_deg) * ANGLE_UNITS.get(
         attrs.get("aunit") or attrs.get("unit"), math.pi / 180.0
     )
@@ -126,7 +125,7 @@ def transform_point(m: Mat4, p: Vec3) -> Vec3:
     )
 
 
-def parse_vec(el: Optional[ET.Element], unit_map: Dict[Optional[str], float]) -> Vec3:
+def parse_vec(el: ET.Element | None, unit_map: dict[str | None, float]) -> Vec3:
     if el is None:
         return (0.0, 0.0, 0.0)
     unit = unit_map.get(el.attrib.get("unit"), 1.0)
@@ -143,7 +142,7 @@ def placement_matrix(physvol: ET.Element) -> Mat4:
     return matmul(translate(*pos), euler_xyz(*rot))
 
 
-def add_tri(tris: List[Triangle], a: Vec3, b: Vec3, c: Vec3) -> None:
+def add_tri(tris: list[Triangle], a: Vec3, b: Vec3, c: Vec3) -> None:
     ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
     vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
     nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
@@ -151,7 +150,7 @@ def add_tri(tris: List[Triangle], a: Vec3, b: Vec3, c: Vec3) -> None:
         tris.append((a, b, c))
 
 
-def add_quad(tris: List[Triangle], a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> None:
+def add_quad(tris: list[Triangle], a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> None:
     add_tri(tris, a, b, c)
     add_tri(tris, a, c, d)
 
@@ -165,9 +164,9 @@ def mesh_tube_like(
     start: float,
     delta: float,
     segments: int,
-    low_plane: Optional[Vec3] = None,
-    high_plane: Optional[Vec3] = None,
-) -> List[Triangle]:
+    low_plane: Vec3 | None = None,
+    high_plane: Vec3 | None = None,
+) -> list[Triangle]:
     if zlen <= 0 or max(rmax0, rmax1) <= 0:
         return []
     frac = min(1.0, abs(delta) / (2 * math.pi))
@@ -176,15 +175,15 @@ def mesh_tube_like(
     phis = [start + delta * i / n for i in range(n + 1)]
     z0, z1 = -zlen / 2.0, zlen / 2.0
 
-    def z_at(base: float, plane: Optional[Vec3], x: float, y: float) -> float:
+    def z_at(base: float, plane: Vec3 | None, x: float, y: float) -> float:
         if plane is None or abs(plane[2]) < 1e-12:
             return base
         return base - (plane[0] * x + plane[1] * y) / plane[2]
 
-    lo_o: List[Vec3] = []
-    hi_o: List[Vec3] = []
-    lo_i: List[Vec3] = []
-    hi_i: List[Vec3] = []
+    lo_o: list[Vec3] = []
+    hi_o: list[Vec3] = []
+    lo_i: list[Vec3] = []
+    hi_i: list[Vec3] = []
     for phi in phis:
         co, si = math.cos(phi), math.sin(phi)
         x, y = rmax0 * co, rmax0 * si
@@ -196,7 +195,7 @@ def mesh_tube_like(
         x, y = rmin1 * co, rmin1 * si
         hi_i.append((x, y, z_at(z1, high_plane, x, y)))
 
-    tris: List[Triangle] = []
+    tris: list[Triangle] = []
     has_hole = max(rmin0, rmin1) > 1e-9
     for i in range(n):
         j = i + 1
@@ -214,7 +213,7 @@ def mesh_tube_like(
     return tris
 
 
-def mesh_box(attrs: Dict[str, str]) -> List[Triangle]:
+def mesh_box(attrs: dict[str, str]) -> list[Triangle]:
     x, y, z = length(attrs, "x") / 2, length(attrs, "y") / 2, length(attrs, "z") / 2
     v = [
         (-x, -y, -z),
@@ -234,13 +233,13 @@ def mesh_box(attrs: Dict[str, str]) -> List[Triangle]:
         (2, 6, 7, 3),
         (3, 7, 4, 0),
     ]
-    tris: List[Triangle] = []
+    tris: list[Triangle] = []
     for a, b, c, d in faces:
         add_quad(tris, v[a], v[b], v[c], v[d])
     return tris
 
 
-def mesh_solid_primitive(el: ET.Element, segments: int) -> List[Triangle]:
+def mesh_solid_primitive(el: ET.Element, segments: int) -> list[Triangle]:
     attrs = el.attrib
     kind = tag_name(el)
     if kind == "box":
@@ -285,7 +284,7 @@ def mesh_solid_primitive(el: ET.Element, segments: int) -> List[Triangle]:
     return []
 
 
-def color_for_material(name: str) -> Tuple[int, int, int, int]:
+def color_for_material(name: str) -> tuple[int, int, int, int]:
     for key, rgba in MATERIAL_COLORS.items():
         if name.startswith(key):
             return rgba
@@ -310,13 +309,13 @@ class VolumeDef:
 
 @dataclass
 class Scene:
-    positions: List[float] = field(default_factory=list)
-    colors: List[int] = field(default_factory=list)
-    ids: List[int] = field(default_factory=list)
-    objects: List[Dict[str, object]] = field(default_factory=list)
-    warnings: Dict[str, int] = field(default_factory=dict)
-    bbox_min: List[float] = field(default_factory=lambda: [float("inf")] * 3)
-    bbox_max: List[float] = field(default_factory=lambda: [float("-inf")] * 3)
+    positions: list[float] = field(default_factory=list)
+    colors: list[int] = field(default_factory=list)
+    ids: list[int] = field(default_factory=list)
+    objects: list[dict[str, object]] = field(default_factory=list)
+    warnings: dict[str, int] = field(default_factory=dict)
+    bbox_min: list[float] = field(default_factory=lambda: [float("inf")] * 3)
+    bbox_max: list[float] = field(default_factory=lambda: [float("-inf")] * 3)
 
     def warn(self, message: str) -> None:
         self.warnings[message] = self.warnings.get(message, 0) + 1
@@ -340,10 +339,10 @@ class GDMLSceneBuilder:
         self.max_objects = max_objects
         self.max_vertices = max_vertices
         self.root = ET.parse(gdml).getroot()
-        self.solids: Dict[str, ET.Element] = {}
-        self.volumes: Dict[str, VolumeDef] = {}
+        self.solids: dict[str, ET.Element] = {}
+        self.volumes: dict[str, VolumeDef] = {}
         self.world = ""
-        self.mesh_cache: Dict[str, Tuple[List[Triangle], str]] = {}
+        self.mesh_cache: dict[str, tuple[list[Triangle], str]] = {}
         self.scene = Scene()
         self.backend_name = "python"
 
@@ -355,7 +354,7 @@ class GDMLSceneBuilder:
         for el in list(solids_el):
             if "name" in el.attrib:
                 self.solids[el.attrib["name"]] = el
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
         for el in children(structure, "volume"):
             name = el.attrib.get("name", f"volume_{len(counts)}")
             seq = counts.get(name, 0)
@@ -377,7 +376,7 @@ class GDMLSceneBuilder:
             else next(reversed(self.volumes))
         )
 
-    def solid_mesh(self, ref: str) -> Tuple[List[Triangle], str]:
+    def solid_mesh(self, ref: str) -> tuple[list[Triangle], str]:
         if ref in self.mesh_cache:
             return self.mesh_cache[ref]
         el = self.solids.get(ref)
@@ -491,7 +490,7 @@ class GDMLSceneBuilder:
                 self.scene.warn("Stopped at configured object/vertex limit")
                 return
 
-    def build(self) -> Dict[str, object]:
+    def build(self) -> dict[str, object]:
         self.parse()
         world = self.volumes.get(self.world)
         if world is None:
@@ -502,11 +501,11 @@ class GDMLSceneBuilder:
             self.scene.bbox_max = [1, 1, 1]
         return self.to_dict()
 
-    def to_dict(self) -> Dict[str, object]:
-        materials: Dict[str, int] = {}
-        material_colors: Dict[str, List[int]] = {}
-        solid_types: Dict[str, int] = {}
-        bases: Dict[str, int] = {}
+    def to_dict(self) -> dict[str, object]:
+        materials: dict[str, int] = {}
+        material_colors: dict[str, list[int]] = {}
+        solid_types: dict[str, int] = {}
+        bases: dict[str, int] = {}
         for obj in self.scene.objects:
             materials[str(obj["material"])] = materials.get(str(obj["material"]), 0) + 1
             material_colors[str(obj["material"])] = list(
