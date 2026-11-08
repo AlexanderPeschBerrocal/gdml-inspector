@@ -133,6 +133,13 @@ def transform_point(m: Mat4, p: Vec3) -> Vec3:
     )
 
 
+def transform_mesh(tris: list[Triangle], m: Mat4) -> list[Triangle]:
+    return [
+        (transform_point(m, a), transform_point(m, b), transform_point(m, c))
+        for a, b, c in tris
+    ]
+
+
 def parse_vec(el: ET.Element | None, unit_map: dict[str | None, float]) -> Vec3:
     if el is None:
         return (0.0, 0.0, 0.0)
@@ -142,6 +149,18 @@ def parse_vec(el: ET.Element | None, unit_map: dict[str | None, float]) -> Vec3:
         f(el.attrib, "y") * unit,
         f(el.attrib, "z") * unit,
     )
+
+
+def parse_scale(el: ET.Element | None) -> Vec3:
+    if el is None:
+        return (1.0, 1.0, 1.0)
+    return (f(el.attrib, "x", 1.0), f(el.attrib, "y", 1.0), f(el.attrib, "z", 1.0))
+
+
+def scale_matrix(sx: float, sy: float, sz: float) -> Mat4:
+    m = identity()
+    m[0][0], m[1][1], m[2][2] = sx, sy, sz
+    return m
 
 
 def transform_element(
@@ -164,6 +183,7 @@ def placement_matrix(
     physvol: ET.Element,
     positions: dict[str, ET.Element] | None = None,
     rotations: dict[str, ET.Element] | None = None,
+    scales: dict[str, ET.Element] | None = None,
 ) -> Mat4:
     """Return the transform that places a daughter volume in its mother.
 
@@ -171,15 +191,19 @@ def placement_matrix(
     uses the inverse of the rotation matrix built from the x, y and z angles: a
     physvol rotation describes the rotation of the daughter's frame, so the
     volume itself is turned the opposite way. Boolean operands are different
-    and use the rotation as given (see GDMLSceneBuilder.solid_mesh).
+    and use the rotation as given (see GDMLSceneBuilder.solid_mesh). An
+    optional scale, typically a reflection such as x = -1, is applied before
+    the rotation.
     """
     pos = parse_vec(transform_element(physvol, "position", positions), LEN_UNITS)
     rx, ry, rz = parse_vec(
         transform_element(physvol, "rotation", rotations), ANGLE_UNITS
     )
+    sx, sy, sz = parse_scale(transform_element(physvol, "scale", scales))
     # (Rz Ry Rx)^-1 = Rx(-x) Ry(-y) Rz(-z)
     inverse_rotation = matmul(rot_x(-rx), matmul(rot_y(-ry), rot_z(-rz)))
-    return matmul(translate(*pos), inverse_rotation)
+    scale = scale_matrix(sx, sy, sz)
+    return matmul(translate(*pos), matmul(inverse_rotation, scale))
 
 
 def add_tri(tris: list[Triangle], a: Vec3, b: Vec3, c: Vec3) -> None:
@@ -384,6 +408,7 @@ class GDMLSceneBuilder:
         self.assemblies: dict[str, ET.Element] = {}
         self.positions: dict[str, ET.Element] = {}
         self.rotations: dict[str, ET.Element] = {}
+        self.scales: dict[str, ET.Element] = {}
         self.world = ""
         self.mesh_cache: dict[str, tuple[list[Triangle], str]] = {}
         self.scene = Scene()
@@ -402,6 +427,9 @@ class GDMLSceneBuilder:
             for el in children(define, "rotation"):
                 if "name" in el.attrib:
                     self.rotations[el.attrib["name"]] = el
+            for el in children(define, "scale"):
+                if "name" in el.attrib:
+                    self.scales[el.attrib["name"]] = el
         for el in list(solids_el):
             if "name" in el.attrib:
                 self.solids[el.attrib["name"]] = el
@@ -441,32 +469,32 @@ class GDMLSceneBuilder:
         kind = tag_name(el)
         if kind in {"box", "tube", "cutTube", "cone"}:
             tris = mesh_solid_primitive(el, self.segments)
-        elif kind in {"subtraction", "intersection"}:
+        elif kind in {"subtraction", "intersection", "union"}:
             first = child(el, "first")
             first_ref = first.attrib.get("ref", "") if first is not None else ""
             tris, subkind = self.solid_mesh(first_ref)
-            self.scene.warn(
-                f"{kind} solid {ref} approximated by first operand {first_ref}"
+            # Like the second operand, the first operand's optional transform
+            # uses the rotation as given (G4GDMLReadSolids::BooleanRead).
+            first_m = matmul(
+                translate(*parse_vec(child(el, "firstposition"), LEN_UNITS)),
+                euler_xyz(*parse_vec(child(el, "firstrotation"), ANGLE_UNITS)),
             )
+            tris = transform_mesh(tris, first_m)
+            if kind == "union":
+                second = child(el, "second")
+                tris2, _ = self.solid_mesh(
+                    second.attrib.get("ref", "") if second is not None else ""
+                )
+                m = matmul(
+                    translate(*parse_vec(child(el, "position"), LEN_UNITS)),
+                    euler_xyz(*parse_vec(child(el, "rotation"), ANGLE_UNITS)),
+                )
+                tris = tris + transform_mesh(tris2, m)
+            else:
+                self.scene.warn(
+                    f"{kind} solid {ref} approximated by first operand {first_ref}"
+                )
             kind = f"{kind}/{subkind}"
-        elif kind == "union":
-            first = child(el, "first")
-            second = child(el, "second")
-            tris, subkind = self.solid_mesh(
-                first.attrib.get("ref", "") if first is not None else ""
-            )
-            tris2, _ = self.solid_mesh(
-                second.attrib.get("ref", "") if second is not None else ""
-            )
-            m = matmul(
-                translate(*parse_vec(child(el, "position"), LEN_UNITS)),
-                euler_xyz(*parse_vec(child(el, "rotation"), ANGLE_UNITS)),
-            )
-            tris = tris + [
-                (transform_point(m, a), transform_point(m, b), transform_point(m, c))
-                for a, b, c in tris2
-            ]
-            kind = f"union/{subkind}"
         else:
             tris = []
             self.scene.warn(f"Unsupported solid type {kind}: {ref}")
@@ -522,7 +550,8 @@ class GDMLSceneBuilder:
             ref = ref_el.attrib.get("ref", "")
             pv_name = pv.attrib.get("name", ref)
             child_matrix = matmul(
-                matrix, placement_matrix(pv, self.positions, self.rotations)
+                matrix,
+                placement_matrix(pv, self.positions, self.rotations, self.scales),
             )
             # Like Geant4, a reference names an assembly before a logical volume.
             # An assembly's physvols are placed relative to its own placement.

@@ -80,19 +80,22 @@ python -m pip install '.[pyg4ometry]'
 gdml-inspector detector.gdml --backend pyg4ometry --serve
 ```
 
-The pure Python backend meshes `box`, `tube`, `cutTube`, and `cone`. It combines
-union operand meshes without removing interior faces, approximates subtraction
-and intersection by their first operand with warnings, and skips unsupported
-solids with warnings. Placement traversal handles nested `physvol` volumes and
-`assembly` groups, with positions and rotations given inline or resolved by
-name through `positionref`/`rotationref`. Scales, replicas, expressions, and
-several other GDML constructs are not fully supported. Some unsupported
-constructs currently produce no warning.
+The pure Python backend meshes `box`, `tube`, `cutTube`, and `cone`. Boolean
+`union`/`subtraction`/`intersection` apply an optional `firstposition`/
+`firstrotation` to their first operand; union combines meshes without
+removing interior faces, and subtraction/intersection approximate the result
+by their (transformed) first operand with warnings. Unsupported solids are
+skipped with warnings. Placement traversal handles nested `physvol` volumes
+and `assembly` groups, with positions, rotations, and scales given inline or
+resolved by name through `positionref`/`rotationref`/`scaleref`. Replicas,
+expressions, and several other GDML constructs are not fully supported. Some
+unsupported constructs currently produce no warning.
 
 The optional backend improves solid tessellation but uses the same local XML
 placement traversal. It does not make the entire GDML reader complete. Physvol
 placement rotation matches Geant4's inverse convention used by ROOT Explorer,
-and angles without an aunit/unit default to radians per the GDML schema. See
+an optional scale is applied before it, and angles without an aunit/unit
+default to radians per the GDML schema. See
 [limitations](docs/limitations.md) before interpreting a geometry. These
 rendered meshes are not quantitative material maps or authoritative geometry
 validation.
