@@ -181,7 +181,7 @@ from gdml_inspector.api import Geometry, world_triangles
 
 geometry = Geometry.load(Path("detector.gdml"), backend="python")
 for placement in geometry.placements:
-    mesh = geometry.solids[placement.solid]       # shared across repeated placements
+    mesh = geometry.solids[placement.solid]  # shared across repeated placements
     triangles = world_triangles(geometry, placement)  # mm, world-space
     print(placement.path, placement.material, len(mesh.triangles))
 print(geometry.bounds, len(geometry.diagnostics))
