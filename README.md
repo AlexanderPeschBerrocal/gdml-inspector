@@ -173,6 +173,28 @@ unit/axis/normal choices made by this exporter (millimetre-to-metre
 conversion only, no Y-up axis remap, no per-vertex normals) and for how its
 correctness is checked without an installed glTF validator.
 
+## Python API
+
+```python
+from pathlib import Path
+from gdml_inspector.api import Geometry, world_triangles
+
+geometry = Geometry.load(Path("detector.gdml"), backend="python")
+for placement in geometry.placements:
+    mesh = geometry.solids[placement.solid]       # shared across repeated placements
+    triangles = world_triangles(geometry, placement)  # mm, world-space
+    print(placement.path, placement.material, len(mesh.triangles))
+print(geometry.bounds, len(geometry.diagnostics))
+```
+
+`gdml_inspector.api` is a small, documented, stable entry point for reading
+placements, materials, meshes, bounds, and diagnostics from Python, without
+pulling in Streamlit, Plotly, ROOT, or the optional pyg4ometry backend
+unless `backend="pyg4ometry"` is explicitly requested. See its module
+docstring and [limitations](docs/limitations.md) for units, identities,
+resource-budget semantics, and error behaviour, and
+[CHANGELOG.md](CHANGELOG.md) for its versioning policy.
+
 ## Development
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.6,
