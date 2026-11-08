@@ -28,7 +28,16 @@ test = [
     "tomli>=2; python_version < '3.11'",
 ]
 lint = ["ruff==0.16.5"]
-typing = ["mypy==1.19.1", "typing-extensions>=4.12"]
+typing = [
+    "mypy==1.19.1",
+    "typing-extensions>=4.12",
+    # scripts/release.py and check_release.py's own 3.10-compat tomllib
+    # fallback: mypy's python_version=3.10 setting (pyproject.toml below)
+    # statically type-checks that branch regardless of which Python
+    # actually runs mypy, so unlike the test group's own tomli entry, this
+    # one is NOT conditioned on the running interpreter's version.
+    "tomli>=2",
+]
 release = ["bump-my-version==1.6.1"]
 hooks = [{ include-group = "lint" }, "pre-commit>=4,<5"]
 build = ["build>=1.2", "setuptools==84.2.1", "wheel==0.48.0"]
