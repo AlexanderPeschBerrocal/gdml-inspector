@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gdml-inspector"
-version = "0.2.0"
+version = "0.3.0"
 description = "Inspect and share Geant4 GDML geometries in a browser"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,7 +21,12 @@ pyg4ometry = ["pyg4ometry"]
 
 # Development tools are local dependency groups, not published package extras.
 [dependency-groups]
-test = ["pytest>=8,<10", "pytest-cov>=6,<8", "hypothesis>=6,<7"]
+test = [
+    "pytest>=8,<10",
+    "pytest-cov>=6,<8",
+    "hypothesis>=6,<7",
+    "tomli>=2; python_version < '3.11'",
+]
 lint = ["ruff==0.16.5"]
 typing = ["mypy==1.19.1", "typing-extensions>=4.12"]
 hooks = [{ include-group = "lint" }, "pre-commit>=4,<5"]

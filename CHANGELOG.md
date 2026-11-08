@@ -31,6 +31,45 @@ afterthought:
 Full release tooling (tagging, changelog automation, version validation) is
 tracked separately as issue #22; this file is maintained by hand until then.
 
+## Package version
+
+Distinct from the `gdml_inspector.api` policy above, this is the package's
+own version (`pyproject.toml`'s `version` field, what `--version` reports,
+what `pip show gdml-inspector` shows): **Semantic Versioning**, pre-1.0
+(`0.x` — a breaking change may still land in a minor bump until a
+deliberate `1.0.0`), not CalVer. `pyproject.toml`'s `version` field is the
+one authoritative value in the repo; `gdml_inspector.__version__` is
+always derived from the installed distribution's metadata
+(`importlib.metadata.version("gdml-inspector")`), never a second literal
+to keep in sync by hand. To bump the version: edit `pyproject.toml`, then
+run `uv lock` so the lockfile and your editable install pick it up —
+`tests/test_version.py`'s `test_declared_installed_and_runtime_versions_agree`
+exists specifically to catch forgetting that second step, and the CI
+isolated-wheel check verifies the same equality from an installed wheel
+outside the source checkout. Full release automation (tagging, dry runs,
+automated bumping) is issue #22's separate scope; this is only the
+authoritative-source policy that tooling will build on.
+
+## [0.3.0] - 2026-11-08
+
+### Added
+
+- `--version` on `--diff` and `--gltf` (previously only `standalone`/
+  `--lazy` had it; `--diff`/`--gltf --version` used to fail with a
+  confusing "required arguments" error instead of reporting a version).
+
+### Fixed
+
+- `python -m gdml_inspector --version` used to print `__main__.py
+  <version>` (argparse's default `prog` is `sys.argv[0]`'s basename, which
+  for `-m` invocation is `__main__.py`); every CLI mode now sets an
+  explicit `prog`, so `--version` output is stable and consistent
+  (`gdml-inspector <version>`, `gdml-inspector-lazy <version>`,
+  `gdml-inspector --diff <version>`, `gdml-inspector --gltf <version>`)
+  regardless of invocation method.
+- `gdml_inspector.__version__` no longer duplicates `pyproject.toml`'s
+  version as a second hand-maintained literal; see "Package version" above.
+
 ## [0.2.0] - 2026-11-08
 
 ### Added

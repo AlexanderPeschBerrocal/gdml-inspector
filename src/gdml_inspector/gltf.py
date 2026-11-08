@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import quote
 
+from . import __version__
 from . import geometry as base
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder
 
@@ -303,6 +304,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="gdml-inspector --gltf",
         description="Export GDML geometry to glTF 2.0 (.gltf + .bin) or GLB (.glb).",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
     )
     parser.add_argument("gdml", type=Path, help="Input GDML file")
     parser.add_argument(

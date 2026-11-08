@@ -125,6 +125,18 @@ the lock with the new uv release. Update `.python-version`, the corresponding
 CI matrix entry, and these instructions together when changing the development
 interpreter. Neither change should silently narrow public Python support.
 
+## Updating the package version
+
+`pyproject.toml`'s `version` field is the one authoritative value;
+`gdml_inspector.__version__` is always derived from it via the installed
+distribution's metadata, not a second literal. To bump the version: edit
+`pyproject.toml`, then run `uv lock` and `uv sync --locked` so your editable
+install and the lockfile pick up the change. `tests/test_version.py` fails
+if you forget the second step, and the CI isolated-wheel check verifies the
+same equality from an installed wheel outside the checkout. See
+[CHANGELOG.md](../CHANGELOG.md)'s "Package version" section for the
+versioning policy (Semantic Versioning, pre-1.0).
+
 ## Independent pip installations
 
 The lock is for repository development/CI. Users installing a wheel or running

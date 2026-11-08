@@ -41,7 +41,8 @@ def write_html(scene: SceneDict, output: Path) -> None:
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="GDML Inspector: build a standalone HTML/WebGL geometry viewer."
+        prog="gdml-inspector",
+        description="GDML Inspector: build a standalone HTML/WebGL geometry viewer.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
