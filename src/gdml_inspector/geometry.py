@@ -7,7 +7,9 @@ import hashlib
 import math
 import operator
 import re
+import sys
 import xml.etree.ElementTree as ET
+from array import array
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -491,6 +493,14 @@ def source_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def little_endian_bytes(values: array) -> bytes:
+    if sys.byteorder == "little":
+        return values.tobytes()
+    copied = array(values.typecode, values)
+    copied.byteswap()
+    return copied.tobytes()
+
+
 @dataclass
 class VolumeDef:
     name: str
@@ -901,6 +911,20 @@ class GDMLSceneBuilder:
             "Stopped at configured object/vertex limit",
         )
 
+    def _on_placement(
+        self, path: str, parent_path: str, local_matrix: Mat4, is_assembly: bool
+    ) -> None:
+        """No-op hook for consumers that need each placement's own local
+        transform and position in the tree (e.g. a hierarchical exporter);
+        standalone/lazy/diff only need the cumulative world matrix already
+        threaded through add_volume()."""
+
+    def _on_volume(self, path: str, volume: VolumeDef, render: bool) -> None:
+        """No-op hook for consumers that need a volume's render decision
+        independent of whether add_volume() is actually invoked (a hidden
+        container still needs an empty pivot node in a hierarchical
+        export)."""
+
     def place_physvols(
         self,
         physvols: list[ET.Element],
@@ -916,13 +940,15 @@ class GDMLSceneBuilder:
                 continue
             ref = ref_el.attrib.get("ref", "")
             pv_name = pv.attrib.get("name", ref)
-            child_matrix = matmul(
-                matrix,
-                placement_matrix(pv, self.positions, self.rotations, self.scales),
+            local_matrix = placement_matrix(
+                pv, self.positions, self.rotations, self.scales
             )
+            child_matrix = matmul(matrix, local_matrix)
+            child_path = f"{path}/{pv_name}"
             # Like Geant4, a reference names an assembly before a logical volume.
             # An assembly's physvols are placed relative to its own placement.
             assembly = self.assemblies.get(ref)
+            self._on_placement(child_path, path, local_matrix, assembly is not None)
             if assembly is not None:
                 key = ("assembly", ref)
                 if key in ancestors:
@@ -934,7 +960,7 @@ class GDMLSceneBuilder:
                 self.place_physvols(
                     children(assembly, "physvol"),
                     child_matrix,
-                    f"{path}/{pv_name}",
+                    child_path,
                     depth + 1,
                     ancestors | {key},
                 )
@@ -950,9 +976,7 @@ class GDMLSceneBuilder:
                         identifier=ref,
                     )
                     continue
-                self.traverse(
-                    child_vol, child_matrix, f"{path}/{pv_name}", depth + 1, ancestors
-                )
+                self.traverse(child_vol, child_matrix, child_path, depth + 1, ancestors)
             if self._budget_exceeded():
                 self._record_budget_exceeded()
                 return
@@ -999,6 +1023,7 @@ class GDMLSceneBuilder:
         render = (self.include_containers or not container) and (
             self.include_world or volume.name != self.world
         )
+        self._on_volume(path, volume, render)
         if render:
             self.add_volume(volume, matrix, path)
         self.place_physvols(phys, matrix, path, depth, ancestors)

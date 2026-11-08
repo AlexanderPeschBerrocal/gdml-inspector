@@ -155,6 +155,24 @@ comparison as JSON; a human-readable summary always prints to stdout.
 Synchronised side-by-side viewing of both geometries is not implemented —
 this is a reporting tool, not a viewer feature.
 
+## Exporting to glTF/GLB
+
+```bash
+gdml-inspector --gltf detector.gdml --backend python --out exports/detector.glb
+```
+
+Writes a self-contained binary glTF (`.glb`); use `--out model.gltf` instead
+for the plain-text `.gltf` + sibling `.bin` form. Unlike the single-file and
+lazy exporters, this builds a true node hierarchy: each GDML placement is a
+glTF node nested under its parent, so a repeated logical volume shares one
+glTF mesh by reference instead of being baked into world space once per
+placement. `--include-containers`, `--include-world`, `--quality`,
+`--max-objects`, `--max-vertices`, `--backend`, and `--report` work the same
+as the other export modes; see [limitations](docs/limitations.md) for the
+unit/axis/normal choices made by this exporter (millimetre-to-metre
+conversion only, no Y-up axis remap, no per-vertex normals) and for how its
+correctness is checked without an installed glTF validator.
+
 ## Development
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.6,

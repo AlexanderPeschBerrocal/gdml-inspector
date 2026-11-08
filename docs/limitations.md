@@ -92,6 +92,40 @@ suite is not a claim that those gaps have been fixed.
   every GDML-visible respect (same semantic path, same raw path, same
   properties) beyond reporting them as such.
 
+## Geometry export (glTF/GLB)
+
+- `--gltf` builds a true node hierarchy (each GDML placement is a glTF node
+  nested under its parent) rather than the flat world-space scene the other
+  two exporters produce, so a repeated logical volume shares one glTF mesh
+  by reference instead of being baked into world space once per placement.
+- There is no `gltf-validator`/`pygltflib` dependency available in this
+  project's offline, dependency-free environment. Correctness is instead
+  covered by an independent test-side GLB/glTF decoder (`tests/test_gltf.py`,
+  mirroring `tests/test_chunks.py`'s own precedent for this project's custom
+  binary chunk format) plus a hand-written check of the specific
+  required-field subset this exporter emits. Neither is a substitute for
+  running the output through the official Khronos validator or a real
+  viewer (Blender, three.js) before relying on it downstream.
+- GDML's conventional Z-up axes are exported as-is; there is no axis remap
+  to glTF's typical Y-up convention. glTF does not strictly mandate Y-up,
+  and remapping risks a handedness bug for comparatively little benefit, so
+  this is a deliberate choice, not an oversight. A consumer expecting Y-up
+  must rotate the scene itself.
+- No per-vertex normals are emitted; every mesh is non-indexed triangle
+  soup (`mode: TRIANGLES`, no `indices` accessor), matching how every other
+  exporter here already produces flat triangle data. Viewers are expected
+  to flat-shade or auto-generate normals, consistent with this project's
+  already-faceted meshes.
+- Every material is marked `doubleSided: true` unconditionally, since a
+  GDML `<scale>` reflection flips triangle winding with no compensating
+  normal and most viewers would otherwise back-face-cull or badly light a
+  mirrored mesh; this trades a small render-cost increase for correctness
+  on every mesh, not just reflected ones.
+- A solid that fails to mesh (unsupported type, missing reference) gets no
+  glTF mesh at all, same as the other exporters; the diagnostic is still
+  recorded and reachable through `--report`, `--strict`/`--fail-on` are not
+  exposed for this mode.
+
 ## Rendering and size limits
 
 - Union meshes can contain interior surfaces. Subtraction/intersection can look

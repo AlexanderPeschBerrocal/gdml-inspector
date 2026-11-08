@@ -262,17 +262,9 @@ class LazyPyg4ometrySceneBuilder(LazyBuilderMixin, Pyg4ometrySceneBuilder):
     pass
 
 
-def little_endian_bytes(values: array) -> bytes:
-    if sys.byteorder == "little":
-        return values.tobytes()
-    copied = array(values.typecode, values)
-    copied.byteswap()
-    return copied.tobytes()
-
-
 def write_chunk(chunk: Chunk, path: Path) -> int:
-    positions = little_endian_bytes(chunk.positions)
-    colors = little_endian_bytes(chunk.colors)
+    positions = base.little_endian_bytes(chunk.positions)
+    colors = base.little_endian_bytes(chunk.colors)
     position_offset = HEADER.size
     color_offset = position_offset + len(positions)
     id_offset = color_offset + len(colors)
