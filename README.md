@@ -62,7 +62,7 @@ destination. `python -m gdml_inspector` supports the same options as the main CL
 | Approximate click inspection of object metadata | Yes | Not yet |
 | Wireframe overlay and light/dark theme | Yes | Not yet |
 | Subsystem/layer toggles and unloading hidden geometry | Not applicable | Yes |
-| Inline parser/mesher warnings | Yes | Yes |
+| Structured diagnostics (code, severity, category, construct, backend) | Yes | Yes |
 
 The subsystem grouping currently uses COCOA-inspired name and shape heuristics;
 it is not the complete GDML volume hierarchy. Lazy loading reduces browser
@@ -111,6 +111,21 @@ Use `--quality fast|medium|high`, `--max-objects`, and `--max-vertices` to contr
 export size; lazy mode also provides `--chunk-vertices`. See
 `gdml-inspector --help` and `gdml-inspector --lazy --help` for mode-specific
 options, asset reuse, and optional backend debugging.
+
+## Diagnostics and validation
+
+Every warning above is also a structured diagnostic: a stable `code`,
+`severity` (`error`/`warning`), `category` (`unsupported`/`reference`/
+`budget`/`numeric`/`backend`), the GDML `construct` involved, an `identifier`
+where one applies, the `backend` that produced it, and an occurrence `count`.
+`--report path.json` writes that list; it is also embedded in every export as
+`meta.diagnostics`, alongside `meta.diagnosticSummary`'s per-severity and
+per-category totals. `--validate-only` parses and reports without writing a
+viewer. `--strict` exits 5 if any diagnostic is `error` severity;
+`--fail-on` (repeatable) extends that to specific severities or categories,
+e.g. `--fail-on budget` to also fail on a truncated export. A `--strict`
+export without `--validate-only` still writes its output for inspection; it
+just does not exit 0.
 
 ## Development
 
