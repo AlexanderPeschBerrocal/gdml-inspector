@@ -3,6 +3,7 @@
 import math
 from collections import Counter
 
+from gdml_inspector.api import Geometry
 from gdml_inspector.diff import DiffGDMLSceneBuilder
 from gdml_inspector.geometry import GDMLSceneBuilder
 from gdml_inspector.gltf import GltfGDMLSceneBuilder, build_gltf
@@ -34,6 +35,11 @@ def lazy_builder(path, **options):
 
 def diff_builder(path, **options):
     return DiffGDMLSceneBuilder(path, **(DIFF_DEFAULT_OPTIONS | options))
+
+
+def api_geometry(path, **options):
+    """Load a Geometry with the usual test defaults via Geometry.load()."""
+    return Geometry.load(path, **(DEFAULT_OPTIONS | options))
 
 
 def gltf_document(path, **options):

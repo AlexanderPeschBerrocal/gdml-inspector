@@ -13,6 +13,7 @@ directory is required.
 | `lazy` | Layer classification, binary chunks, manifests, asset reuse and lazy CLI |
 | `diff` | Compares two built scenes and reports semantic placement differences |
 | `gltf` | Exports a hierarchical glTF 2.0 / GLB model for use outside this project |
+| `api` | Small, documented public Python API: `Geometry.load()`, placements/meshes/bounds/diagnostics |
 | `server` | Local HTTP server with explicit document root and resource cleanup |
 | `cli` | Installed entry points, mode dispatch, concise error reporting |
 | `assets/*.html` | Offline browser UI, WebGL shaders and interaction code |
@@ -50,12 +51,27 @@ a hidden container even though `add_volume()` is never called for it. The
 hooks are no-ops by default, so every existing consumer is unaffected; only
 `gltf.GltfMixin` overrides them.
 
+`api`'s builders specialise only `add_volume()`, like `diff`, since its
+public `Geometry` has no hierarchy concept: it records each rendered
+placement's world matrix into a side table (rather than mutating
+`scene.objects` in place, so it never depends on that dict's shape) and
+caches one local-space `Mesh` per solid ref the first time a placement
+uses it, reusing `solid_mesh()`'s own cache so repeated placements cost no
+extra meshing. `Geometry`/`Placement`/`Mesh`/`Bounds` are the actual public
+contract — not `scene.objects`'/`to_dict()`'s internal dict shapes, which
+remain free to change. See `gdml_inspector.api`'s module docstring for the
+full units/identities/resource-budget/error-behaviour contract and
+`CHANGELOG.md` for its versioning policy.
+
 HTML resources are loaded through `importlib.resources`, including when run from
 an installed wheel. No browser package manager or remote JavaScript CDN is used.
 The local server binds to `127.0.0.1`, serves the output directory without
 changing process working directory, and closes its socket when interrupted.
 
-The scene/manifest interfaces remain provisional. The roadmap calls for a
-validated scene graph, parser consolidation, instancing, and a small public
-geometry API usable by ROOT Explorer. Those are follow-up work, not features
-claimed by this initial extraction.
+The scene/manifest interfaces used by the HTML exporters remain provisional
+and specific to those formats. `gdml_inspector.api` is the small public
+geometry API the roadmap called for, covering the repo-local half of issue
+#12: reading placements/materials/meshes/bounds/diagnostics from Python.
+The separate ROOT Explorer adapter that would consume it, and shared
+fixtures proving parity between the two, are cross-repository follow-up
+work, not claimed here.

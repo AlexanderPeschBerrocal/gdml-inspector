@@ -126,6 +126,34 @@ suite is not a claim that those gaps have been fixed.
   recorded and reachable through `--report`, `--strict`/`--fail-on` are not
   exposed for this mode.
 
+## Public API (`gdml_inspector.api`)
+
+- All lengths are millimetres, this project's native/unconverted GDML
+  unit; `Mat4` is row-major with translation at `matrix[row][3]`, the same
+  convention `geometry.py` already uses internally.
+- `Geometry.placements` contains only placements that actually rendered;
+  `include_containers`/`include_world` control which, exactly as for every
+  other export mode. `Geometry.solids` is not a 1:1 reflection of every
+  `<solid>` in the source GDML, only of solids actually used by a rendered
+  placement; a Boolean solid's operand-only refs and solids behind a
+  hidden container never appear. Two placements sharing a GDML solid ref
+  share the same `Mesh` object by identity, but only meaningfully within
+  one `Geometry.load()` call — quality and backend are fixed per load, so
+  it is not a cross-call cache key.
+- `max_objects`/`max_vertices` truncate silently with a `"limit-reached"`
+  diagnostic, like every other export mode; they do not raise.
+  `Geometry.load()` otherwise raises the same `ValueError` cases
+  `parse()`/`traverse()`/`place_physvols()` already raise elsewhere (cyclic
+  references, excessive nesting, missing `<solids>`/`<structure>`), plus
+  the natural `FileNotFoundError`/`ParseError` for a bad path, and
+  `ModuleNotFoundError` for an explicitly-requested but missing pyg4ometry
+  backend. There is no custom exception hierarchy.
+- This module is the repo-local half of issue #12 only. It does not
+  include a ROOT Explorer adapter, shared fixtures proving parity between
+  Inspector exports and such an adapter, or any cross-repository release/
+  dependency policy — those are explicitly deferred to a separate change
+  in ROOT Explorer's own repository, per the issue's own text.
+
 ## Rendering and size limits
 
 - Union meshes can contain interior surfaces. Subtraction/intersection can look
