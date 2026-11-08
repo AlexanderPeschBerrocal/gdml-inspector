@@ -56,9 +56,10 @@ runtime dependencies. Development tools are local dependency groups:
 | --- | --- |
 | `test` | pytest, pytest-cov, Hypothesis, and their resolved dependencies |
 | `lint` | the project's pinned Ruff release |
+| `typing` | the project's pinned Mypy release, plus typing-extensions |
 | `hooks` | pre-commit and the `lint` group |
 | `build` | distribution tooling and pinned setuptools/wheel |
-| `dev` | includes `test`, `lint`, `build`, and `hooks`; installed by default |
+| `dev` | includes `test`, `lint`, `typing`, `build`, and `hooks`; installed by default |
 
 Install only a particular group:
 
@@ -70,15 +71,18 @@ uv sync --locked --no-default-groups --group lint
 uv run --no-sync python -m ruff check .
 uv run --no-sync python -m ruff format --check .
 
+uv sync --locked --no-default-groups --group typing
+uv run --no-sync mypy
+
 uv sync --locked --no-default-groups --group build
 uv run --no-sync python -m build --no-isolation
 ```
 
 A normal sync removes packages not selected for that environment. Run
 `uv sync --locked` to restore the full development environment after switching
-groups. Typing, documentation, browser, and release groups should be added when
-their respective tooling is introduced, using the same independent-group
-pattern. They are not empty placeholders or unused dependencies today.
+groups. Documentation, browser, and release groups should be added when their
+respective tooling is introduced, using the same independent-group pattern.
+They are not empty placeholders or unused dependencies today.
 
 For the optional backend:
 

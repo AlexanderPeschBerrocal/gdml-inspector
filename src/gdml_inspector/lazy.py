@@ -13,7 +13,7 @@ import sys
 import tempfile
 from array import array
 from collections import Counter, OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
@@ -148,9 +148,27 @@ class Chunk:
 
 
 class LazyBuilderMixin:
-    """Mixin that changes the original builder from one scene to layer chunks."""
+    """Mixin that changes the original builder from one scene to layer chunks.
 
-    def __init__(self, *args, chunk_vertices: int, **kwargs) -> None:
+    Supplied by GDMLSceneBuilder/Pyg4ometrySceneBuilder in the final,
+    multiply-inherited class (LazyGDMLSceneBuilder, etc.) -- declared here,
+    with no value, only so mypy can check this mixin's own method bodies
+    against its actual contract rather than reporting every access as
+    undefined."""
+
+    scene: base.Scene
+    max_objects: int
+    max_vertices: int
+    gdml: Path
+    backend_name: str
+    quality: str
+    world: str
+    volumes: dict[str, base.VolumeDef]
+    solid_mesh: Callable[[str], tuple[list[base.Triangle], str]]
+    parse: Callable[[], None]
+    traverse: Callable[..., None]
+
+    def __init__(self, *args: object, chunk_vertices: int, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.chunk_vertices = max(3, int(chunk_vertices))
         self.chunks: OrderedDict[str, Chunk] = OrderedDict()
@@ -498,10 +516,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             serve_file(output, args.port, open_browser=not args.no_browser)
         return 0
 
-    builder_cls = LazyGDMLSceneBuilder
+    builder_cls: type[LazyGDMLSceneBuilder] | type[LazyPyg4ometrySceneBuilder] = (
+        LazyGDMLSceneBuilder
+    )
     if args.backend in {"auto", "pyg4ometry"}:
         try:
-            import pyg4ometry  # type: ignore  # noqa: F401
+            import pyg4ometry  # noqa: F401
 
             builder_cls = LazyPyg4ometrySceneBuilder
             print("Using pyg4ometry backend for solid tessellation.")

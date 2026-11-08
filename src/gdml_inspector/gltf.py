@@ -21,6 +21,7 @@ import tempfile
 from array import array
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 from urllib.parse import quote
 
 from . import geometry as base
@@ -42,7 +43,7 @@ class GltfMixin:
     the other exporters use. Building the actual node tree from these flat,
     path-keyed records happens afterward in build_gltf(), not here."""
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._placements: dict[str, tuple[str, base.Mat4, bool]] = {}
         self._volume_at_path: dict[str, tuple[base.VolumeDef, bool]] = {}
@@ -62,6 +63,9 @@ class GltfGDMLSceneBuilder(GltfMixin, base.GDMLSceneBuilder):
 
 class GltfPyg4ometrySceneBuilder(GltfMixin, Pyg4ometrySceneBuilder):
     pass
+
+
+GltfBuilder = GltfGDMLSceneBuilder | GltfPyg4ometrySceneBuilder
 
 
 def _flatten_matrix(m: base.Mat4) -> list[float]:
@@ -118,7 +122,7 @@ class _GltfDocument:
         )
         return index
 
-    def _position_accessor(self, builder, solid_ref: str) -> int | None:
+    def _position_accessor(self, builder: GltfBuilder, solid_ref: str) -> int | None:
         """The POSITION accessor for one solid's local-space mesh, in
         metres; shared by every (solid, material) mesh built from it, so
         repeated logical shapes never duplicate vertex bytes."""
@@ -178,7 +182,7 @@ class _GltfDocument:
         return index
 
     def get_or_create_mesh(
-        self, builder, solid_ref: str, material_name: str
+        self, builder: GltfBuilder, solid_ref: str, material_name: str
     ) -> int | None:
         key = (solid_ref, material_name)
         if key in self._mesh_indices:
@@ -219,7 +223,7 @@ class _GltfDocument:
         }
 
 
-def build_gltf(builder) -> tuple[dict, bytes]:
+def build_gltf(builder: GltfBuilder) -> tuple[dict, bytes]:
     """Parse, walk, and assemble a glTF document from a GltfGDMLSceneBuilder
     or GltfPyg4ometrySceneBuilder instance. Drives traverse() directly
     (not build()): the flat world-space accumulation the other exporters
@@ -258,7 +262,8 @@ def build_gltf(builder) -> tuple[dict, bytes]:
         doc.nodes[child_index]["matrix"] = _flatten_matrix(local_matrix)
         parent_index = ensure_node(parent_path)
         parent_node = doc.nodes[parent_index]
-        parent_node.setdefault("children", []).append(child_index)  # type: ignore[union-attr]
+        children = cast(list, parent_node.setdefault("children", []))
+        children.append(child_index)
 
     return doc.to_json(root_index), bytes(doc.buffer)
 
@@ -340,10 +345,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    builder_cls = GltfGDMLSceneBuilder
+    builder_cls: type[GltfGDMLSceneBuilder] | type[GltfPyg4ometrySceneBuilder] = (
+        GltfGDMLSceneBuilder
+    )
     if args.backend in {"auto", "pyg4ometry"}:
         try:
-            import pyg4ometry  # type: ignore  # noqa: F401
+            import pyg4ometry  # noqa: F401
 
             builder_cls = GltfPyg4ometrySceneBuilder
             print("Using pyg4ometry backend for solid tessellation.")

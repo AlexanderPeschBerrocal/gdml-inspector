@@ -21,6 +21,27 @@ same test group alongside the other development tools. To run just the
 numerical checks, use `uv run --no-sync pytest tests/test_units.py
 tests/test_transforms.py tests/test_meshes.py tests/test_invariants.py`.
 
+## Static type checking
+
+```bash
+uv sync --locked --no-default-groups --group typing
+uv run --no-sync mypy
+```
+
+Scope is explicitly `files = ["src/gdml_inspector"]` in `[tool.mypy]`
+(`pyproject.toml`) -- not `tests/`. `disallow_untyped_defs`/`warn_return_any`/
+`warn_unused_ignores` are on, and the only suppression is a single
+`[[tool.mypy.overrides]]` for `pyg4ometry.*` (it ships no inline types or
+stubs); installing the `typing` group alone never installs pyg4ometry
+itself. This is a gradual rollout, not full coverage: `geometry.py`'s
+`ObjectDict`/`SceneDict`/`DiagnosticDict` TypedDicts type the core scene
+model precisely (catching, for example, a `str`-typed field being passed
+an `int`), and `diff.py`'s consumption of that same shape is typed with
+it; `lazy.py`'s manifest/chunk-entry dict and `diff.py`'s own comparison-
+report dict are a different, separate shape and remain `dict`/
+`dict[str, object]`, explicitly deferred rather than left as a silent gap
+(see [limitations](limitations.md)).
+
 ## Independent expectations
 
 | Test module | Contract checked |

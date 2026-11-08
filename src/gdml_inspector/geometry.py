@@ -10,8 +10,13 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from array import array
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from typing_extensions import NotRequired
 
 Vec3 = tuple[float, float, float]
 Mat4 = list[list[float]]
@@ -66,7 +71,7 @@ NUMERIC_EXPRESSION_KEYS = {
     "highY",
     "highZ",
 }
-_EXPRESSION_BINARY_OPS = {
+_EXPRESSION_BINARY_OPS: dict[type[ast.operator], Callable[[float, float], float]] = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
     ast.Mult: operator.mul,
@@ -74,8 +79,11 @@ _EXPRESSION_BINARY_OPS = {
     ast.Pow: operator.pow,
     ast.Mod: operator.mod,
 }
-_EXPRESSION_UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
-_EXPRESSION_FUNCTIONS = {
+_EXPRESSION_UNARY_OPS: dict[type[ast.unaryop], Callable[[float], float]] = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
+_EXPRESSION_FUNCTIONS: dict[str, Callable[..., float]] = {
     "sin": math.sin,
     "cos": math.cos,
     "tan": math.tan,
@@ -523,6 +531,17 @@ DIAGNOSTIC_CATEGORIES = ("unsupported", "reference", "budget", "numeric", "backe
 STRICT_EXIT_CODE = 5
 
 
+class DiagnosticDict(TypedDict):
+    code: str
+    severity: str
+    category: str
+    construct: str
+    identifier: str
+    backend: str
+    message: str
+    count: int
+
+
 @dataclass
 class Diagnostic:
     code: str
@@ -534,7 +553,7 @@ class Diagnostic:
     backend: str = ""
     count: int = 1
 
-    def as_dict(self) -> dict[str, object]:
+    def as_dict(self) -> DiagnosticDict:
         return {
             "code": self.code,
             "severity": self.severity,
@@ -547,12 +566,34 @@ class Diagnostic:
         }
 
 
+class ObjectDict(TypedDict):
+    """One rendered placement, as recorded by ``add_volume()``. The base
+    shape every exporter produces; ``diff.py``'s ``DiffMixin`` additionally
+    sets ``matrix``, which is why that key is optional here rather than on
+    a separate type -- ``list`` is invariant, so a distinct subtype would
+    not be assignable where this one is expected."""
+
+    id: int
+    name: str
+    semanticName: str
+    volume: str
+    semanticVolume: str
+    material: str
+    solid: str
+    solidType: str
+    firstVertex: int
+    vertexCount: int
+    bbox: list[float]
+    path: str
+    matrix: NotRequired[list[float]]
+
+
 @dataclass
 class Scene:
     positions: list[float] = field(default_factory=list)
     colors: list[int] = field(default_factory=list)
     ids: list[int] = field(default_factory=list)
-    objects: list[dict[str, object]] = field(default_factory=list)
+    objects: list[ObjectDict] = field(default_factory=list)
     diagnostics: dict[tuple[str, str, str], Diagnostic] = field(default_factory=dict)
     bbox_min: list[float] = field(default_factory=lambda: [float("inf")] * 3)
     bbox_max: list[float] = field(default_factory=lambda: [float("-inf")] * 3)
@@ -601,7 +642,7 @@ def format_warnings(diagnostics: dict[tuple[str, str, str], Diagnostic]) -> list
 
 def diagnostics_list(
     diagnostics: dict[tuple[str, str, str], Diagnostic],
-) -> list[dict[str, object]]:
+) -> list[DiagnosticDict]:
     return [
         d.as_dict()
         for d in sorted(
@@ -622,14 +663,41 @@ def diagnostics_summary(
 
 
 def diagnostics_matching(
-    diagnostics: list[dict[str, object]], fail_on: set[str]
-) -> list[dict[str, object]]:
+    diagnostics: list[DiagnosticDict], fail_on: set[str]
+) -> list[DiagnosticDict]:
     """Entries from a serialized ``meta.diagnostics`` list whose severity or
     category is in ``fail_on``; used by each CLI's ``--strict``, which fails
     on 'error' severity by default."""
     return [
         d for d in diagnostics if d["severity"] in fail_on or d["category"] in fail_on
     ]
+
+
+class SceneMeta(TypedDict):
+    source: str
+    sourceFile: str
+    backend: str
+    quality: str
+    world: str
+    objects: int
+    vertices: int
+    triangles: int
+    bbox: list[float]
+    materials: dict[str, int]
+    materialColors: dict[str, list[int]]
+    solidTypes: dict[str, int]
+    semanticVolumeCounts: dict[str, int]
+    warnings: list[str]
+    diagnostics: list[DiagnosticDict]
+    diagnosticSummary: dict[str, dict[str, int]]
+
+
+class SceneDict(TypedDict):
+    meta: SceneMeta
+    positions: list[float]
+    colors: list[int]
+    ids: list[int]
+    objects: list[ObjectDict]
 
 
 class GDMLSceneBuilder:
@@ -1028,7 +1096,7 @@ class GDMLSceneBuilder:
             self.add_volume(volume, matrix, path)
         self.place_physvols(phys, matrix, path, depth, ancestors)
 
-    def build(self) -> dict[str, object]:
+    def build(self) -> SceneDict:
         self.parse()
         world = self.volumes.get(self.world)
         if world is None:
@@ -1039,7 +1107,7 @@ class GDMLSceneBuilder:
             self.scene.bbox_max = [1, 1, 1]
         return self.to_dict()
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self) -> SceneDict:
         materials: dict[str, int] = {}
         material_colors: dict[str, list[int]] = {}
         solid_types: dict[str, int] = {}

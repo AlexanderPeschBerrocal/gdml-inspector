@@ -13,8 +13,9 @@ import argparse
 import json
 import math
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TypedDict, cast
 
 from . import geometry as base
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder
@@ -23,9 +24,31 @@ DEFAULT_TOLERANCE = 1e-6
 _BOOLEAN_SOLID_TYPES = {"union", "subtraction", "intersection"}
 
 
-class DiffMixin:
+class SolidInfo(TypedDict):
+    type: str
+    params: dict[str, float]
+
+
+class DiffSceneDict(base.SceneDict):
+    solids: dict[str, SolidInfo]
+
+
+class AmbiguousDict(TypedDict):
+    semanticPath: str
+    pathsA: list[str]
+    pathsB: list[str]
+
+
+class DiffMixin(base.GDMLSceneBuilder):
     """Persists the per-object placement matrix and a solids dict that
-    plain exports don't need, so the standalone/lazy viewers stay lean."""
+    plain exports don't need, so the standalone/lazy viewers stay lean.
+
+    Declares GDMLSceneBuilder as its base purely so mypy can check this
+    mixin's own ``super().add_volume()``/``super().to_dict()`` calls and
+    ``self.scene``/``self.solids`` accesses against a real contract: the
+    actual runtime MRO is unaffected, since DiffGDMLSceneBuilder/
+    DiffPyg4ometrySceneBuilder already list a GDMLSceneBuilder subtype as
+    their other base, and C3 linearization collapses the duplicate."""
 
     def add_volume(self, volume: base.VolumeDef, matrix: base.Mat4, path: str) -> None:
         count_before = len(self.scene.objects)
@@ -33,13 +56,20 @@ class DiffMixin:
         if len(self.scene.objects) > count_before:
             self.scene.objects[-1]["matrix"] = [v for row in matrix[:3] for v in row]
 
-    def to_dict(self) -> dict[str, object]:
-        result = super().to_dict()
+    def to_dict(self) -> DiffSceneDict:
+        result = cast(DiffSceneDict, super().to_dict())
         result["solids"] = {
             ref: {"type": base.tag_name(el), "params": base.solid_params(el)}
             for ref, el in self.solids.items()
         }
         return result
+
+    def build(self) -> DiffSceneDict:
+        # build() itself is unchanged; only re-declared so its return type
+        # reflects to_dict()'s override above (build() calls self.to_dict()
+        # polymorphically, which mypy can't see through GDMLSceneBuilder's
+        # own declared SceneDict return type).
+        return cast(DiffSceneDict, super().build())
 
 
 class DiffGDMLSceneBuilder(DiffMixin, base.GDMLSceneBuilder):
@@ -96,21 +126,21 @@ def decompose_matrix(
 
 
 def group_by_semantic_path(
-    objects: list[dict[str, object]],
-) -> dict[str, list[dict[str, object]]]:
-    groups: dict[str, list[dict[str, object]]] = {}
+    objects: list[base.ObjectDict],
+) -> dict[str, list[base.ObjectDict]]:
+    groups: dict[str, list[base.ObjectDict]] = {}
     for obj in objects:
-        groups.setdefault(base.semantic_path(str(obj["path"])), []).append(obj)
+        groups.setdefault(base.semantic_path(obj["path"]), []).append(obj)
     return groups
 
 
 def match_objects(
-    objects_a: list[dict[str, object]], objects_b: list[dict[str, object]]
+    objects_a: list[base.ObjectDict], objects_b: list[base.ObjectDict]
 ) -> tuple[
-    list[tuple[dict[str, object], dict[str, object]]],
-    list[dict[str, object]],
-    list[dict[str, object]],
-    list[dict[str, object]],
+    list[tuple[base.ObjectDict, base.ObjectDict]],
+    list[base.ObjectDict],
+    list[base.ObjectDict],
+    list[AmbiguousDict],
 ]:
     """Match objects by address-suffix-insensitive placement path.
 
@@ -129,10 +159,10 @@ def match_objects(
     """
     groups_a = group_by_semantic_path(objects_a)
     groups_b = group_by_semantic_path(objects_b)
-    matched: list[tuple[dict[str, object], dict[str, object]]] = []
-    added: list[dict[str, object]] = []
-    removed: list[dict[str, object]] = []
-    ambiguous: list[dict[str, object]] = []
+    matched: list[tuple[base.ObjectDict, base.ObjectDict]] = []
+    added: list[base.ObjectDict] = []
+    removed: list[base.ObjectDict] = []
+    ambiguous: list[AmbiguousDict] = []
     for key in sorted(set(groups_a) | set(groups_b)):
         a_list = groups_a.get(key, [])
         b_list = groups_b.get(key, [])
@@ -142,14 +172,14 @@ def match_objects(
         if not b_list:
             removed.extend(a_list)
             continue
-        a_by_raw_path: dict[object, list[dict[str, object]]] = {}
+        a_by_raw_path: dict[str, list[base.ObjectDict]] = {}
         for obj in a_list:
             a_by_raw_path.setdefault(obj["path"], []).append(obj)
-        b_by_raw_path: dict[object, list[dict[str, object]]] = {}
+        b_by_raw_path: dict[str, list[base.ObjectDict]] = {}
         for obj in b_list:
             b_by_raw_path.setdefault(obj["path"], []).append(obj)
-        leftover_a: list[dict[str, object]] = []
-        leftover_b: list[dict[str, object]] = []
+        leftover_a: list[base.ObjectDict] = []
+        leftover_b: list[base.ObjectDict] = []
         for raw_path in sorted(set(a_by_raw_path) | set(b_by_raw_path)):
             a_group = a_by_raw_path.get(raw_path, [])
             b_group = b_by_raw_path.get(raw_path, [])
@@ -172,10 +202,10 @@ def match_objects(
 
 
 def classify_pair(
-    obj_a: dict[str, object],
-    obj_b: dict[str, object],
-    solids_a: dict[str, dict[str, object]],
-    solids_b: dict[str, dict[str, object]],
+    obj_a: base.ObjectDict,
+    obj_b: base.ObjectDict,
+    solids_a: dict[str, SolidInfo],
+    solids_b: dict[str, SolidInfo],
     tolerance: float,
     boolean_solids: set[tuple[str, str, str]],
 ) -> dict[str, object] | None:
@@ -185,16 +215,17 @@ def classify_pair(
     comparable regardless of whether anything else changed."""
     changes: dict[str, object] = {}
 
-    material_a = base.semantic_name(str(obj_a["material"]))
-    material_b = base.semantic_name(str(obj_b["material"]))
+    material_a = base.semantic_name(obj_a["material"])
+    material_b = base.semantic_name(obj_b["material"])
     if material_a != material_b:
         changes["material"] = {"from": material_a, "to": material_b}
 
-    solid_a = solids_a.get(str(obj_a["solid"]), {"type": "missing", "params": {}})
-    solid_b = solids_b.get(str(obj_b["solid"]), {"type": "missing", "params": {}})
+    missing_solid: SolidInfo = {"type": "missing", "params": {}}
+    solid_a = solids_a.get(obj_a["solid"], missing_solid)
+    solid_b = solids_b.get(obj_b["solid"], missing_solid)
     for label, obj, solid in (("A", obj_a, solid_a), ("B", obj_b, solid_b)):
         if solid["type"] in _BOOLEAN_SOLID_TYPES:
-            boolean_solids.add((label, str(obj["solid"]), str(solid["type"])))
+            boolean_solids.add((label, obj["solid"], solid["type"]))
     if solid_a["type"] != solid_b["type"]:
         changes["solidType"] = {"from": solid_a["type"], "to": solid_b["type"]}
     elif solid_a["type"] not in _BOOLEAN_SOLID_TYPES:
@@ -228,14 +259,18 @@ def classify_pair(
 
 
 def build_report(
-    path_a: Path, path_b: Path, scene_a: dict, scene_b: dict, tolerance: float
+    path_a: Path,
+    path_b: Path,
+    scene_a: DiffSceneDict,
+    scene_b: DiffSceneDict,
+    tolerance: float,
 ) -> dict[str, object]:
     objects_a, objects_b = scene_a["objects"], scene_b["objects"]
     solids_a, solids_b = scene_a["solids"], scene_b["solids"]
     matched, added, removed, ambiguous = match_objects(objects_a, objects_b)
 
     boolean_solids: set[tuple[str, str, str]] = set()
-    changed = []
+    changed: list[dict[str, object]] = []
     unchanged = 0
     for obj_a, obj_b in matched:
         changes = classify_pair(
@@ -248,12 +283,12 @@ def build_report(
             {
                 "pathA": obj_a["path"],
                 "pathB": obj_b["path"],
-                "semanticPath": base.semantic_path(str(obj_a["path"])),
+                "semanticPath": base.semantic_path(obj_a["path"]),
                 **changes,
             }
         )
 
-    limitations = []
+    limitations: list[str] = []
     backend_a, backend_b = scene_a["meta"]["backend"], scene_b["meta"]["backend"]
     if backend_a != backend_b:
         limitations.append(
@@ -299,7 +334,9 @@ def build_report(
     }
 
 
-def _print_bucket(label: str, items: list, line) -> None:
+def _print_bucket(
+    label: str, items: list[object], line: Callable[[object], object]
+) -> None:
     if not items:
         return
     print(f"{label}:")
@@ -310,32 +347,42 @@ def _print_bucket(label: str, items: list, line) -> None:
 
 
 def print_summary(report: dict[str, object]) -> None:
+    # report's own shape (build_report()'s return value) is deliberately
+    # left as dict[str, object] in this PR, unlike scene.objects' ObjectDict
+    # -- a different, separate contract explicitly deferred to a follow-up
+    # (see docs/limitations.md); casts below bridge that untyped boundary
+    # for this purely cosmetic CLI printing, not a scene/export contract.
     print(f"Comparing {report['sourceA']} vs {report['sourceB']}")
     print(f"  A: {report['digestA']}  backend={report['backendA']}")
     print(f"  B: {report['digestB']}  backend={report['backendB']}")
-    s = report["summary"]
+    s = cast(dict, report["summary"])
     print(
         f"Added: {s['added']}  Removed: {s['removed']}  Changed: {s['changed']}  "
         f"Ambiguous: {s['ambiguous']}  Unchanged: {s['unchanged']}"
     )
-    _print_bucket("Added", report["added"], lambda o: o["path"])
-    _print_bucket("Removed", report["removed"], lambda o: o["path"])
+    _print_bucket("Added", cast(list, report["added"]), lambda o: cast(dict, o)["path"])
+    _print_bucket(
+        "Removed", cast(list, report["removed"]), lambda o: cast(dict, o)["path"]
+    )
     _print_bucket(
         "Changed",
-        report["changed"],
+        cast(list, report["changed"]),
         lambda o: (
-            f"{o['semanticPath']}: "
-            + ", ".join(k for k in o if k not in {"pathA", "pathB", "semanticPath"})
+            f"{cast(dict, o)['semanticPath']}: "
+            + ", ".join(
+                k for k in cast(dict, o) if k not in {"pathA", "pathB", "semanticPath"}
+            )
         ),
     )
     _print_bucket(
         "Ambiguous (not paired)",
-        report["ambiguous"],
+        cast(list, report["ambiguous"]),
         lambda o: (
-            f"{o['semanticPath']}: {len(o['pathsA'])} in A, {len(o['pathsB'])} in B"
+            f"{cast(dict, o)['semanticPath']}: {len(cast(dict, o)['pathsA'])} in A, "
+            f"{len(cast(dict, o)['pathsB'])} in B"
         ),
     )
-    _print_bucket("Limitations", report["limitations"], lambda item: item)
+    _print_bucket("Limitations", cast(list, report["limitations"]), lambda item: item)
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -372,10 +419,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"GDML file {label} not found: {path}", file=sys.stderr)
             return 2
 
-    builder_cls = DiffGDMLSceneBuilder
+    builder_cls: type[DiffGDMLSceneBuilder] | type[DiffPyg4ometrySceneBuilder] = (
+        DiffGDMLSceneBuilder
+    )
     if args.backend in {"auto", "pyg4ometry"}:
         try:
-            import pyg4ometry  # type: ignore  # noqa: F401
+            import pyg4ometry  # noqa: F401
 
             builder_cls = DiffPyg4ometrySceneBuilder
             print("Using pyg4ometry backend for solid tessellation.")
@@ -389,7 +438,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 3
             print("pyg4ometry not installed; using pure-Python backend.")
 
-    def build(path: Path) -> dict:
+    def build(path: Path) -> DiffSceneDict:
         return builder_cls(
             path,
             quality="fast",
@@ -409,7 +458,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.report.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(f"Wrote diff report {args.report}")
 
-    s = report["summary"]
+    s = cast(dict, report["summary"])
     if s["added"] or s["removed"] or s["changed"] or s["ambiguous"]:
         return 1
     return 0
