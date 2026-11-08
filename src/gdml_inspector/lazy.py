@@ -67,7 +67,7 @@ def classify_chunk(
 
     semantic_volume = base.semantic_name(volume.name)
     semantic_solid = base.semantic_name(volume.solid)
-    semantic_path = "/".join(base.semantic_name(part) for part in path.split("/"))
+    semantic_path = base.semantic_path(path)
     material = canonical_material(volume.material)
     text = f"{semantic_volume} {semantic_solid} {semantic_path} {material}".lower()
 

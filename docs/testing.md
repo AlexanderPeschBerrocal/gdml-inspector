@@ -33,6 +33,7 @@ tests/test_transforms.py tests/test_meshes.py tests/test_invariants.py`.
 | `test_chunks.py` | Independently decoded little-endian payloads, translated vertices, packing, asset reuse |
 | `test_limits.py` | Object caps, complete-object vertex boundaries, empty budgets, lazy overshoot rejection |
 | `test_diagnostics.py` | Diagnostic aggregation by code/construct/identifier, severity/category summaries, every emitted code's shape in both export modes |
+| `test_diff.py` | Placement matching (raw-path, sole-leftover, repeated-path ambiguity), independent translation/orientation/scale/dimension/material/solid-type classification, reordered-definition and address-suffix-rename non-changes, Boolean-solid limitations, `--diff` CLI exit codes and `--report` |
 | `test_cli.py`, `test_version.py`, `test_exports.py` | Error/absence paths, launcher version options, portable HTML, script escaping, `--strict`/`--fail-on`/`--report`/`--validate-only` |
 | `test_known_limitations.py` | Desired behaviour for tracked gaps, marked as strict expected failures |
 

@@ -64,6 +64,34 @@ suite is not a claim that those gaps have been fixed.
   resolved placement path; several physvols sharing one broken reference
   aggregate into a single diagnostic with a count, not one per placement.
 
+## Geometry comparison
+
+- `--diff` is a CLI/JSON reporting tool only; there is no synchronised
+  side-by-side viewer, camera sync, or overlay rendering (the UI half of
+  issue #9). It always compares the entire structure
+  (`include_containers`/`include_world` are not exposed as flags for this
+  mode, unlike the viewer exports) since hiding containers would hide real
+  structural differences.
+- A placement's rotation and reflection are reported together as a single
+  `orientation` change, not independently: a pure reflection has the same
+  column length as an identity rotation, so it cannot be told apart from an
+  ordinary 180-degree rotation by inspecting the composed world transform
+  alone without risking misclassifying the (far more common) plain rotation
+  as a scale/reflection change. `scale` only reports a *magnitude* change.
+- Only `box`/`tube`/`cutTube`/`cone` solids have comparable numeric
+  parameters. A Boolean solid (`union`/`subtraction`/`intersection`) is
+  noted as a limitation instead of silently reporting unchanged dimensions.
+- A placement that failed to mesh at all (missing solid reference,
+  unsupported solid type) is invisible to the comparison the same way it is
+  invisible to a normal export; it surfaces only indirectly, through each
+  source's own diagnostics folded into the report's `limitations`.
+- Matching is by placement path with address suffixes stripped from every
+  segment, falling back to the sole remaining candidate when exactly one is
+  left unmatched on each side; anything less certain is reported ambiguous,
+  never guessed. It cannot tell two placements apart that are identical in
+  every GDML-visible respect (same semantic path, same raw path, same
+  properties) beyond reporting them as such.
+
 ## Rendering and size limits
 
 - Union meshes can contain interior surfaces. Subtraction/intersection can look
@@ -90,8 +118,9 @@ offline, whereas chunked exports must be served over HTTP with their asset
 directory alongside them. Absolute source paths are retained in embedded
 metadata by the inherited exporters; inspect them before sharing artifacts.
 Use `--backend python` or `--backend pyg4ometry` to avoid the environment-dependent
-choice of `auto`. Fully deterministic exports, source digests, metadata redaction,
-and versioned scene contracts are roadmap items.
+choice of `auto`. Fully deterministic exports, metadata redaction, and versioned
+scene contracts are roadmap items; `--diff` reports already include a sha256
+digest of each compared file, but standalone/lazy exports do not yet.
 
 The dependency-free backend and packaged HTML are covered by automated tests.
 The optional pyg4ometry dependency is not required for that test suite and has
