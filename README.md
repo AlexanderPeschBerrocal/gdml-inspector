@@ -90,8 +90,9 @@ and `assembly` groups, with positions, rotations, and scales given inline or
 resolved by name through `positionref`/`rotationref`/`scaleref`. A cyclic
 volume/assembly reference, or nesting beyond 256 levels, raises an actionable
 error, and a duplicate solid/volume/assembly/`<define>` name is reported with
-a warning. Replicas, expressions, and several other GDML constructs are not
-fully supported. Some unsupported constructs currently produce no warning.
+a warning. `replicavol`/`paramvol`/`divisionvol`/`file` daughters are
+reported with a warning but not expanded. Expressions and several other GDML
+constructs are not fully supported.
 
 The optional backend improves solid tessellation but uses the same local XML
 placement traversal. It does not make the entire GDML reader complete. Physvol
