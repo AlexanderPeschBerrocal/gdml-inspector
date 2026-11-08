@@ -32,6 +32,9 @@ ANGLE_UNITS = {
     "radian": 1.0,
 }
 QUALITY_SEGMENTS = {"fast": 12, "medium": 24, "high": 48}
+# Matches ROOT Explorer's limit: deep enough for real detectors, shallow
+# enough to fail with an actionable error well before the Python call stack.
+MAX_NESTING_DEPTH = 256
 
 MATERIAL_COLORS = {
     "Material_ECAL": (55, 130, 245, 185),
@@ -414,6 +417,16 @@ class GDMLSceneBuilder:
         self.scene = Scene()
         self.backend_name = "python"
 
+    def _register(
+        self, store: dict[str, ET.Element], kind: str, el: ET.Element
+    ) -> None:
+        name = el.attrib.get("name")
+        if name is None:
+            return
+        if name in store:
+            self.scene.warn(f"Duplicate GDML {kind} definition: {name}")
+        store[name] = el
+
     def parse(self) -> None:
         solids_el = child(self.root, "solids")
         structure = child(self.root, "structure")
@@ -422,25 +435,22 @@ class GDMLSceneBuilder:
         define = child(self.root, "define")
         if define is not None:
             for el in children(define, "position"):
-                if "name" in el.attrib:
-                    self.positions[el.attrib["name"]] = el
+                self._register(self.positions, "position", el)
             for el in children(define, "rotation"):
-                if "name" in el.attrib:
-                    self.rotations[el.attrib["name"]] = el
+                self._register(self.rotations, "rotation", el)
             for el in children(define, "scale"):
-                if "name" in el.attrib:
-                    self.scales[el.attrib["name"]] = el
+                self._register(self.scales, "scale", el)
         for el in list(solids_el):
-            if "name" in el.attrib:
-                self.solids[el.attrib["name"]] = el
+            self._register(self.solids, "solid", el)
         for el in children(structure, "assembly"):
-            if "name" in el.attrib:
-                self.assemblies[el.attrib["name"]] = el
+            self._register(self.assemblies, "assembly", el)
         counts: dict[str, int] = {}
         for el in children(structure, "volume"):
             name = el.attrib.get("name", f"volume_{len(counts)}")
             seq = counts.get(name, 0)
             counts[name] = seq + 1
+            if name in self.volumes:
+                self.scene.warn(f"Duplicate GDML volume definition: {name}")
             mat = child(el, "materialref")
             solid = child(el, "solidref")
             self.volumes[name] = VolumeDef(
@@ -540,7 +550,12 @@ class GDMLSceneBuilder:
         )
 
     def place_physvols(
-        self, physvols: list[ET.Element], matrix: Mat4, path: str
+        self,
+        physvols: list[ET.Element],
+        matrix: Mat4,
+        path: str,
+        depth: int = 0,
+        ancestors: frozenset[tuple[str, str]] = frozenset(),
     ) -> None:
         """Traverse the daughters placed by ``physvols`` in a mother at ``matrix``."""
         for pv in physvols:
@@ -557,15 +572,28 @@ class GDMLSceneBuilder:
             # An assembly's physvols are placed relative to its own placement.
             assembly = self.assemblies.get(ref)
             if assembly is not None:
+                key = ("assembly", ref)
+                if key in ancestors:
+                    raise ValueError(f"Cyclic GDML assembly reference: {ref}")
+                if depth + 1 >= MAX_NESTING_DEPTH:
+                    raise ValueError(
+                        f"GDML volume nesting exceeds the supported depth of {MAX_NESTING_DEPTH}"
+                    )
                 self.place_physvols(
-                    children(assembly, "physvol"), child_matrix, f"{path}/{pv_name}"
+                    children(assembly, "physvol"),
+                    child_matrix,
+                    f"{path}/{pv_name}",
+                    depth + 1,
+                    ancestors | {key},
                 )
             else:
                 child_vol = self.volumes.get(ref)
                 if child_vol is None:
                     self.scene.warn(f"Missing volume reference: {ref}")
                     continue
-                self.traverse(child_vol, child_matrix, f"{path}/{pv_name}")
+                self.traverse(
+                    child_vol, child_matrix, f"{path}/{pv_name}", depth + 1, ancestors
+                )
             if (
                 len(self.scene.objects) >= self.max_objects
                 or len(self.scene.positions) // 3 >= self.max_vertices
@@ -573,12 +601,27 @@ class GDMLSceneBuilder:
                 self.scene.warn("Stopped at configured object/vertex limit")
                 return
 
-    def traverse(self, volume: VolumeDef, matrix: Mat4, path: str) -> None:
+    def traverse(
+        self,
+        volume: VolumeDef,
+        matrix: Mat4,
+        path: str,
+        depth: int = 0,
+        ancestors: frozenset[tuple[str, str]] = frozenset(),
+    ) -> None:
         if (
             len(self.scene.objects) >= self.max_objects
             or len(self.scene.positions) // 3 >= self.max_vertices
         ):
             return
+        key = ("volume", volume.name)
+        if key in ancestors:
+            raise ValueError(f"Cyclic GDML volume reference: {volume.name}")
+        if depth >= MAX_NESTING_DEPTH:
+            raise ValueError(
+                f"GDML volume nesting exceeds the supported depth of {MAX_NESTING_DEPTH}"
+            )
+        ancestors = ancestors | {key}
         phys = children(volume.element, "physvol")
         container = bool(phys) or volume.material.startswith("Galactic")
         render = (self.include_containers or not container) and (
@@ -586,7 +629,7 @@ class GDMLSceneBuilder:
         )
         if render:
             self.add_volume(volume, matrix, path)
-        self.place_physvols(phys, matrix, path)
+        self.place_physvols(phys, matrix, path, depth, ancestors)
 
     def build(self) -> dict[str, object]:
         self.parse()

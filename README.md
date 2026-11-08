@@ -87,9 +87,11 @@ removing interior faces, and subtraction/intersection approximate the result
 by their (transformed) first operand with warnings. Unsupported solids are
 skipped with warnings. Placement traversal handles nested `physvol` volumes
 and `assembly` groups, with positions, rotations, and scales given inline or
-resolved by name through `positionref`/`rotationref`/`scaleref`. Replicas,
-expressions, and several other GDML constructs are not fully supported. Some
-unsupported constructs currently produce no warning.
+resolved by name through `positionref`/`rotationref`/`scaleref`. A cyclic
+volume/assembly reference, or nesting beyond 256 levels, raises an actionable
+error, and a duplicate solid/volume/assembly/`<define>` name is reported with
+a warning. Replicas, expressions, and several other GDML constructs are not
+fully supported. Some unsupported constructs currently produce no warning.
 
 The optional backend improves solid tessellation but uses the same local XML
 placement traversal. It does not make the entire GDML reader complete. Physvol

@@ -80,6 +80,119 @@ def test_missing_solid_has_a_warning_and_finite_empty_bounds(single_volume):
     assert any("Missing solid reference: shape" in w for w in scene["meta"]["warnings"])
 
 
+def test_duplicate_volume_definition_is_reported(write_gdml):
+    path = write_gdml(
+        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        structure="""
+<volume name="leaf"><materialref ref="G4_Si"/><solidref ref="shape"/></volume>
+<volume name="leaf"><materialref ref="G4_Si"/><solidref ref="shape"/></volume>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol><volumeref ref="leaf"/></physvol>
+</volume>""",
+    )
+    scene = scene_builder(path).build()
+    assert any(
+        "Duplicate GDML volume definition: leaf" in w for w in scene["meta"]["warnings"]
+    )
+
+
+def test_duplicate_solid_definition_is_reported(single_volume):
+    path = single_volume(
+        '<box name="shape" x="2" y="4" z="6" lunit="mm"/>'
+        '<box name="shape" x="1" y="1" z="1" lunit="mm"/>'
+    )
+    scene = scene_builder(path).build()
+    assert any(
+        "Duplicate GDML solid definition: shape" in w for w in scene["meta"]["warnings"]
+    )
+
+
+def test_duplicate_assembly_definition_is_reported(write_gdml):
+    path = write_gdml(
+        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        structure="""
+<volume name="leaf"><materialref ref="G4_Si"/><solidref ref="shape"/></volume>
+<assembly name="group"><physvol><volumeref ref="leaf"/></physvol></assembly>
+<assembly name="group"><physvol><volumeref ref="leaf"/></physvol></assembly>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol><volumeref ref="group"/></physvol>
+</volume>""",
+    )
+    scene = scene_builder(path).build()
+    assert any(
+        "Duplicate GDML assembly definition: group" in w
+        for w in scene["meta"]["warnings"]
+    )
+
+
+def test_duplicate_named_position_definition_is_reported(single_volume):
+    path = single_volume(
+        placement='<positionref ref="shift"/>',
+        define="""
+<position name="shift" x="10" y="20" z="30" unit="mm"/>
+<position name="shift" x="1" y="1" z="1" unit="mm"/>""",
+    )
+    scene = scene_builder(path).build()
+    assert any(
+        "Duplicate GDML position definition: shift" in w
+        for w in scene["meta"]["warnings"]
+    )
+
+
+def test_cyclic_volume_reference_raises_an_actionable_error(write_gdml):
+    path = write_gdml(
+        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        structure="""
+<volume name="a"><materialref ref="G4_Si"/><solidref ref="shape"/>
+  <physvol><volumeref ref="b"/></physvol>
+</volume>
+<volume name="b"><materialref ref="G4_Si"/><solidref ref="shape"/>
+  <physvol><volumeref ref="a"/></physvol>
+</volume>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol><volumeref ref="a"/></physvol>
+</volume>""",
+    )
+    with pytest.raises(ValueError, match="Cyclic GDML volume reference: a"):
+        scene_builder(path).build()
+
+
+def test_cyclic_assembly_reference_raises_an_actionable_error(write_gdml):
+    path = write_gdml(
+        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        structure="""
+<assembly name="group"><physvol><volumeref ref="group"/></physvol></assembly>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol><volumeref ref="group"/></physvol>
+</volume>""",
+    )
+    with pytest.raises(ValueError, match="Cyclic GDML assembly reference: group"):
+        scene_builder(path).build()
+
+
+def test_excessive_volume_nesting_raises_an_actionable_error(write_gdml):
+    depth = 300
+    layers = [
+        '<volume name="v0"><materialref ref="G4_Si"/><solidref ref="shape"/></volume>'
+    ]
+    for i in range(1, depth):
+        layers.append(
+            f'<volume name="v{i}"><materialref ref="Galactic"/>'
+            f'<solidref ref="shape"/>'
+            f'<physvol><volumeref ref="v{i - 1}"/></physvol></volume>'
+        )
+    layers.append(f"""
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol><volumeref ref="v{depth - 1}"/></physvol>
+</volume>""")
+    path = write_gdml(
+        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        structure="".join(layers),
+    )
+    with pytest.raises(ValueError, match="nesting exceeds the supported depth"):
+        scene_builder(path).build()
+
+
 def test_missing_volume_reference_is_skipped_with_a_warning(write_gdml):
     path = write_gdml(
         solids="",

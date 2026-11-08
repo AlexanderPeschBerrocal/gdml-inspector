@@ -221,7 +221,12 @@ class LazyBuilderMixin:
         self.total_objects += 1
 
     def place_physvols(
-        self, physvols: list[base.ET.Element], matrix: base.Mat4, path: str
+        self,
+        physvols: list[base.ET.Element],
+        matrix: base.Mat4,
+        path: str,
+        depth: int = 0,
+        ancestors: frozenset[tuple[str, str]] = frozenset(),
     ) -> None:
         """Traverse the daughters placed by ``physvols`` in a mother at ``matrix``."""
         for placement in physvols:
@@ -240,27 +245,58 @@ class LazyBuilderMixin:
             # An assembly's physvols are placed relative to its own placement.
             assembly = self.assemblies.get(ref)
             if assembly is not None:
+                key = ("assembly", ref)
+                if key in ancestors:
+                    raise ValueError(f"Cyclic GDML assembly reference: {ref}")
+                if depth + 1 >= base.MAX_NESTING_DEPTH:
+                    raise ValueError(
+                        "GDML volume nesting exceeds the supported depth of "
+                        f"{base.MAX_NESTING_DEPTH}"
+                    )
                 self.place_physvols(
                     base.children(assembly, "physvol"),
                     child_matrix,
                     f"{path}/{placement_name}",
+                    depth + 1,
+                    ancestors | {key},
                 )
             else:
                 child_volume = self.volumes.get(ref)
                 if child_volume is None:
                     self.scene.warn(f"Missing volume reference: {ref}")
                     continue
-                self.traverse(child_volume, child_matrix, f"{path}/{placement_name}")
+                self.traverse(
+                    child_volume,
+                    child_matrix,
+                    f"{path}/{placement_name}",
+                    depth + 1,
+                    ancestors,
+                )
             if self.stopped_at_limit:
                 return
 
-    def traverse(self, volume: base.VolumeDef, matrix: base.Mat4, path: str) -> None:
+    def traverse(
+        self,
+        volume: base.VolumeDef,
+        matrix: base.Mat4,
+        path: str,
+        depth: int = 0,
+        ancestors: frozenset[tuple[str, str]] = frozenset(),
+    ) -> None:
         if (
             self.total_objects >= self.max_objects
             or self.total_vertices >= self.max_vertices
         ):
             self.stopped_at_limit = True
             return
+        key = ("volume", volume.name)
+        if key in ancestors:
+            raise ValueError(f"Cyclic GDML volume reference: {volume.name}")
+        if depth >= base.MAX_NESTING_DEPTH:
+            raise ValueError(
+                f"GDML volume nesting exceeds the supported depth of {base.MAX_NESTING_DEPTH}"
+            )
+        ancestors = ancestors | {key}
         placements = base.children(volume.element, "physvol")
         is_container = bool(placements) or volume.material.startswith("Galactic")
         should_render = (self.include_containers or not is_container) and (
@@ -268,7 +304,7 @@ class LazyBuilderMixin:
         )
         if should_render:
             self.add_volume(volume, matrix, path)
-        self.place_physvols(placements, matrix, path)
+        self.place_physvols(placements, matrix, path, depth, ancestors)
 
     def build_chunks(self) -> None:
         self.parse()
