@@ -50,6 +50,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="Export a lazy-loading viewer instead; use --lazy --help for its options",
     )
+    parser.add_argument(
+        "--diff",
+        action="store_true",
+        help="Compare two GDML files instead; use --diff --help for its options",
+    )
     parser.add_argument("gdml", type=Path, help="Input GDML file")
     parser.add_argument("--out", type=Path, default=None, help="Output HTML path")
     parser.add_argument(

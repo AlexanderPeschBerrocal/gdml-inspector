@@ -3,6 +3,7 @@
 import math
 from collections import Counter
 
+from gdml_inspector.diff import DiffGDMLSceneBuilder
 from gdml_inspector.geometry import GDMLSceneBuilder
 from gdml_inspector.lazy import LazyGDMLSceneBuilder
 
@@ -13,6 +14,12 @@ DEFAULT_OPTIONS = {
     "max_objects": 100,
     "max_vertices": 100_000,
 }
+# A diff must see the entire structure, unlike a viewer export optimizing
+# for what's useful to render.
+DIFF_DEFAULT_OPTIONS = DEFAULT_OPTIONS | {
+    "include_containers": True,
+    "include_world": True,
+}
 
 
 def scene_builder(path, **options):
@@ -22,6 +29,10 @@ def scene_builder(path, **options):
 def lazy_builder(path, **options):
     settings = DEFAULT_OPTIONS | {"chunk_vertices": 72} | options
     return LazyGDMLSceneBuilder(path, **settings)
+
+
+def diff_builder(path, **options):
+    return DiffGDMLSceneBuilder(path, **(DIFF_DEFAULT_OPTIONS | options))
 
 
 def vertices(triangles):

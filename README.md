@@ -127,6 +127,34 @@ e.g. `--fail-on budget` to also fail on a truncated export. A `--strict`
 export without `--validate-only` still writes its output for inspection; it
 just does not exit 0.
 
+## Comparing two geometries
+
+```bash
+gdml-inspector --diff nominal.gdml modified.gdml --report diff.json
+```
+
+Matches placements by path, ignoring Geant4's regenerated `0x...` address
+suffixes on every path segment and tolerant of reordered `<solids>`/
+`<structure>` definitions, then classifies each matched pair's **material**,
+**solid type**, **dimensions** (the solid's own numeric parameters, matched
+by name), **translation**, and **orientation** (rotation and/or reflection,
+reported together since a pure reflection and an ordinary 180-degree
+rotation are not reliably distinguishable from a composed transform alone;
+see [limitations](docs/limitations.md)) independently, plus **added**/
+**removed** placements. Solids are compared by their own resolved numeric
+parameters, not by name, so differently-named-but-identical definitions in
+each file still compare equal. Repeated anonymous placements that cannot be
+matched one-to-one are reported as **ambiguous** rather than paired by
+guesswork.
+`--tolerance` (default `1e-6`, mm/radians) sets how large a numeric
+difference counts as unchanged. The exit code follows the Unix `diff`
+convention (not `--strict`'s severity model, a different question): `0` no
+differences, `1` differences found, `2` a file is missing, `3` the
+requested backend is unavailable. `--report PATH` writes the full
+comparison as JSON; a human-readable summary always prints to stdout.
+Synchronised side-by-side viewing of both geometries is not implemented —
+this is a reporting tool, not a viewer feature.
+
 ## Development
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.6,

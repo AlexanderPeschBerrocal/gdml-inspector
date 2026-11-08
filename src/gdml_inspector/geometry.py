@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import math
 import operator
 import re
@@ -456,6 +457,38 @@ def color_for_material(name: str) -> tuple[int, int, int, int]:
 
 def semantic_name(name: str) -> str:
     return re.sub(r"0x[0-9a-fA-F]+$", "", name)
+
+
+def semantic_path(path: str) -> str:
+    """A placement path with Geant4-regenerated address suffixes stripped
+    from every segment, for comparing placements across separate exports."""
+    return "/".join(semantic_name(part) for part in path.split("/"))
+
+
+# Solid attributes solid_params() reads as lengths vs. angles; together this
+# is exactly NUMERIC_EXPRESSION_KEYS, split by which unit conversion applies.
+_SOLID_LENGTH_PARAM_KEYS = NUMERIC_EXPRESSION_KEYS - {"startphi", "deltaphi"}
+_SOLID_ANGLE_PARAM_KEYS = {"startphi", "deltaphi"}
+
+
+def solid_params(el: ET.Element) -> dict[str, float]:
+    """A solid's own numeric attributes, normalized to mm/radians via the
+    same length()/angle() unit conversion used to mesh it. Only attributes
+    actually present on this element are included, so a box yields x/y/z
+    while a tube also yields rmin/rmax/startphi/deltaphi, and a Boolean
+    solid (no numeric attributes of its own) yields an empty dict."""
+    attrs = el.attrib
+    params = {
+        key: length(attrs, key) for key in _SOLID_LENGTH_PARAM_KEYS if key in attrs
+    }
+    params.update(
+        {key: angle(attrs, key) for key in _SOLID_ANGLE_PARAM_KEYS if key in attrs}
+    )
+    return params
+
+
+def source_digest(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 @dataclass
