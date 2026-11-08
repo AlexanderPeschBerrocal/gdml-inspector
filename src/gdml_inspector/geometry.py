@@ -22,9 +22,10 @@ LEN_UNITS = {
     "um": 0.001,
     "nm": 1e-6,
 }
+# Like Geant4's GDML reader, angles without a unit are in radians.
 ANGLE_UNITS = {
-    None: math.pi / 180.0,
-    "": math.pi / 180.0,
+    None: 1.0,
+    "": 1.0,
     "deg": math.pi / 180.0,
     "degree": math.pi / 180.0,
     "rad": 1.0,
@@ -71,9 +72,16 @@ def length(attrs: dict[str, str], key: str, default: float = 0.0) -> float:
 
 
 def angle(attrs: dict[str, str], key: str, default_deg: float = 0.0) -> float:
-    return f(attrs, key, default_deg) * ANGLE_UNITS.get(
-        attrs.get("aunit") or attrs.get("unit"), math.pi / 180.0
-    )
+    """Return an angle in radians.
+
+    A missing or unparseable attribute uses ``default_deg`` degrees; a present
+    value without an aunit/unit falls back to radians, per the GDML schema.
+    """
+    try:
+        value = float(attrs[key])
+    except (KeyError, TypeError, ValueError):
+        return math.radians(default_deg)
+    return value * ANGLE_UNITS.get(attrs.get("aunit") or attrs.get("unit"), 1.0)
 
 
 def identity() -> Mat4:
@@ -136,7 +144,27 @@ def parse_vec(el: ET.Element | None, unit_map: dict[str | None, float]) -> Vec3:
     )
 
 
-def placement_matrix(physvol: ET.Element) -> Mat4:
+def transform_element(
+    parent: ET.Element, tag: str, definitions: dict[str, ET.Element] | None = None
+) -> ET.Element | None:
+    """Resolve an inline or named transform; never silently ignore a broken reference."""
+    inline = child(parent, tag)
+    if inline is not None:
+        return inline
+    reference = child(parent, f"{tag}ref")
+    if reference is None:
+        return None
+    name = reference.attrib.get("ref", "")
+    if definitions is None or name not in definitions:
+        raise ValueError(f"Missing GDML {tag} reference: {name}")
+    return definitions[name]
+
+
+def placement_matrix(
+    physvol: ET.Element,
+    positions: dict[str, ET.Element] | None = None,
+    rotations: dict[str, ET.Element] | None = None,
+) -> Mat4:
     """Return the transform that places a daughter volume in its mother.
 
     Like Geant4's GDML reader (G4GDMLReadStructure::PhysvolRead), the placement
@@ -145,8 +173,10 @@ def placement_matrix(physvol: ET.Element) -> Mat4:
     volume itself is turned the opposite way. Boolean operands are different
     and use the rotation as given (see GDMLSceneBuilder.solid_mesh).
     """
-    pos = parse_vec(child(physvol, "position"), LEN_UNITS)
-    rx, ry, rz = parse_vec(child(physvol, "rotation"), ANGLE_UNITS)
+    pos = parse_vec(transform_element(physvol, "position", positions), LEN_UNITS)
+    rx, ry, rz = parse_vec(
+        transform_element(physvol, "rotation", rotations), ANGLE_UNITS
+    )
     # (Rz Ry Rx)^-1 = Rx(-x) Ry(-y) Rz(-z)
     inverse_rotation = matmul(rot_x(-rx), matmul(rot_y(-ry), rot_z(-rz)))
     return matmul(translate(*pos), inverse_rotation)
@@ -351,6 +381,9 @@ class GDMLSceneBuilder:
         self.root = ET.parse(gdml).getroot()
         self.solids: dict[str, ET.Element] = {}
         self.volumes: dict[str, VolumeDef] = {}
+        self.assemblies: dict[str, ET.Element] = {}
+        self.positions: dict[str, ET.Element] = {}
+        self.rotations: dict[str, ET.Element] = {}
         self.world = ""
         self.mesh_cache: dict[str, tuple[list[Triangle], str]] = {}
         self.scene = Scene()
@@ -361,9 +394,20 @@ class GDMLSceneBuilder:
         structure = child(self.root, "structure")
         if solids_el is None or structure is None:
             raise ValueError("GDML must contain <solids> and <structure> sections.")
+        define = child(self.root, "define")
+        if define is not None:
+            for el in children(define, "position"):
+                if "name" in el.attrib:
+                    self.positions[el.attrib["name"]] = el
+            for el in children(define, "rotation"):
+                if "name" in el.attrib:
+                    self.rotations[el.attrib["name"]] = el
         for el in list(solids_el):
             if "name" in el.attrib:
                 self.solids[el.attrib["name"]] = el
+        for el in children(structure, "assembly"):
+            if "name" in el.attrib:
+                self.assemblies[el.attrib["name"]] = el
         counts: dict[str, int] = {}
         for el in children(structure, "volume"):
             name = el.attrib.get("name", f"volume_{len(counts)}")
@@ -467,6 +511,39 @@ class GDMLSceneBuilder:
             }
         )
 
+    def place_physvols(
+        self, physvols: list[ET.Element], matrix: Mat4, path: str
+    ) -> None:
+        """Traverse the daughters placed by ``physvols`` in a mother at ``matrix``."""
+        for pv in physvols:
+            ref_el = child(pv, "volumeref")
+            if ref_el is None:
+                continue
+            ref = ref_el.attrib.get("ref", "")
+            pv_name = pv.attrib.get("name", ref)
+            child_matrix = matmul(
+                matrix, placement_matrix(pv, self.positions, self.rotations)
+            )
+            # Like Geant4, a reference names an assembly before a logical volume.
+            # An assembly's physvols are placed relative to its own placement.
+            assembly = self.assemblies.get(ref)
+            if assembly is not None:
+                self.place_physvols(
+                    children(assembly, "physvol"), child_matrix, f"{path}/{pv_name}"
+                )
+            else:
+                child_vol = self.volumes.get(ref)
+                if child_vol is None:
+                    self.scene.warn(f"Missing volume reference: {ref}")
+                    continue
+                self.traverse(child_vol, child_matrix, f"{path}/{pv_name}")
+            if (
+                len(self.scene.objects) >= self.max_objects
+                or len(self.scene.positions) // 3 >= self.max_vertices
+            ):
+                self.scene.warn("Stopped at configured object/vertex limit")
+                return
+
     def traverse(self, volume: VolumeDef, matrix: Mat4, path: str) -> None:
         if (
             len(self.scene.objects) >= self.max_objects
@@ -480,25 +557,7 @@ class GDMLSceneBuilder:
         )
         if render:
             self.add_volume(volume, matrix, path)
-        for pv in phys:
-            ref_el = child(pv, "volumeref")
-            if ref_el is None:
-                continue
-            ref = ref_el.attrib.get("ref", "")
-            child_vol = self.volumes.get(ref)
-            if child_vol is None:
-                self.scene.warn(f"Missing volume reference: {ref}")
-                continue
-            pv_name = pv.attrib.get("name", ref)
-            self.traverse(
-                child_vol, matmul(matrix, placement_matrix(pv)), f"{path}/{pv_name}"
-            )
-            if (
-                len(self.scene.objects) >= self.max_objects
-                or len(self.scene.positions) // 3 >= self.max_vertices
-            ):
-                self.scene.warn("Stopped at configured object/vertex limit")
-                return
+        self.place_physvols(phys, matrix, path)
 
     def build(self) -> dict[str, object]:
         self.parse()

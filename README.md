@@ -83,18 +83,19 @@ gdml-inspector detector.gdml --backend pyg4ometry --serve
 The pure Python backend meshes `box`, `tube`, `cutTube`, and `cone`. It combines
 union operand meshes without removing interior faces, approximates subtraction
 and intersection by their first operand with warnings, and skips unsupported
-solids with warnings. Current placement traversal handles nested `physvol`
-volumes with inline numeric positions and rotations. Named transforms, scales,
-assemblies, replicas, expressions, and several other GDML constructs are not
-fully supported. Some unsupported constructs currently produce no warning.
+solids with warnings. Placement traversal handles nested `physvol` volumes and
+`assembly` groups, with positions and rotations given inline or resolved by
+name through `positionref`/`rotationref`. Scales, replicas, expressions, and
+several other GDML constructs are not fully supported. Some unsupported
+constructs currently produce no warning.
 
 The optional backend improves solid tessellation but uses the same local XML
 placement traversal. It does not make the entire GDML reader complete. Physvol
-placement rotation now matches Geant4's inverse convention used by ROOT
-Explorer; the inherited parser's unitless solid-angle default still needs
-consolidation. See [limitations](docs/limitations.md) before interpreting a
-geometry. These rendered meshes are not quantitative material maps or
-authoritative geometry validation.
+placement rotation matches Geant4's inverse convention used by ROOT Explorer,
+and angles without an aunit/unit default to radians per the GDML schema. See
+[limitations](docs/limitations.md) before interpreting a geometry. These
+rendered meshes are not quantitative material maps or authoritative geometry
+validation.
 
 Use `--quality fast|medium|high`, `--max-objects`, and `--max-vertices` to control
 export size; lazy mode also provides `--chunk-vertices`. See
