@@ -12,6 +12,7 @@ directory is required.
 | `standalone` | Single-file scene export and its argument parser |
 | `lazy` | Layer classification, binary chunks, manifests, asset reuse and lazy CLI |
 | `diff` | Compares two built scenes and reports semantic placement differences |
+| `gltf` | Exports a hierarchical glTF 2.0 / GLB model for use outside this project |
 | `server` | Local HTTP server with explicit document root and resource cleanup |
 | `cli` | Installed entry points, mode dispatch, concise error reporting |
 | `assets/*.html` | Offline browser UI, WebGL shaders and interaction code |
@@ -37,6 +38,17 @@ specialise only `add_volume()`/`to_dict()`, to additionally record each
 object's placement matrix and a solids-by-ref parameter table; they inherit
 the shared walk unchanged. The lazy binary format does not retain per-object
 IDs; precise lazy picking requires an extension to that format.
+
+`gltf`'s builders specialise two further no-op hooks on the shared walk:
+`_on_placement()` (each placement's own local matrix and tree position,
+called from `place_physvols()`) and `_on_volume()` (a volume's render/
+container decision, called from `traverse()`). Both exist because the other
+three exporters only need the cumulative world-space matrix `add_volume()`
+already receives, while a hierarchical glTF node tree needs each
+placement's un-flattened local transform and needs an empty pivot node for
+a hidden container even though `add_volume()` is never called for it. The
+hooks are no-ops by default, so every existing consumer is unaffected; only
+`gltf.GltfMixin` overrides them.
 
 HTML resources are loaded through `importlib.resources`, including when run from
 an installed wheel. No browser package manager or remote JavaScript CDN is used.

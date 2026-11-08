@@ -5,6 +5,7 @@ from collections import Counter
 
 from gdml_inspector.diff import DiffGDMLSceneBuilder
 from gdml_inspector.geometry import GDMLSceneBuilder
+from gdml_inspector.gltf import GltfGDMLSceneBuilder, build_gltf
 from gdml_inspector.lazy import LazyGDMLSceneBuilder
 
 DEFAULT_OPTIONS = {
@@ -33,6 +34,14 @@ def lazy_builder(path, **options):
 
 def diff_builder(path, **options):
     return DiffGDMLSceneBuilder(path, **(DIFF_DEFAULT_OPTIONS | options))
+
+
+def gltf_document(path, **options):
+    """Build a GltfGDMLSceneBuilder with the usual test defaults and return
+    (gltf_json, binary_data, builder) via build_gltf()."""
+    builder = GltfGDMLSceneBuilder(path, **(DEFAULT_OPTIONS | options))
+    gltf_json, binary_data = build_gltf(builder)
+    return gltf_json, binary_data, builder
 
 
 def vertices(triangles):

@@ -6,7 +6,7 @@ import sys
 from collections.abc import Callable, Sequence
 from xml.etree.ElementTree import ParseError
 
-from . import diff, lazy, standalone
+from . import diff, gltf, lazy, standalone
 
 
 def _run(command: Callable, argv: Sequence[str]) -> int:
@@ -22,6 +22,9 @@ def _run(command: Callable, argv: Sequence[str]) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     options_end = args.index("--") if "--" in args else len(args)
+    if "--gltf" in args[:options_end]:
+        args.remove("--gltf")
+        return _run(gltf.main, args)
     if "--diff" in args[:options_end]:
         args.remove("--diff")
         return _run(diff.main, args)
