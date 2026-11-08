@@ -53,6 +53,42 @@ def test_missing_angle_attribute_uses_its_degree_default():
 
 
 @pytest.mark.parametrize(
+    ("expression", "constants", "expected"),
+    [
+        ("5", {}, 5.0),
+        ("2*pi", {"pi": math.pi}, 2 * math.pi),
+        ("halfpi + 1", {"halfpi": math.pi / 2}, math.pi / 2 + 1),
+        ("sqrt(4) + sin(0)", {}, 2.0),
+        ("2^3", {}, 8.0),
+        ("-3 + 1", {}, -2.0),
+        ("(1 + 2) * 3", {}, 9.0),
+    ],
+)
+def test_expression_evaluates_supported_syntax(expression, constants, expected):
+    assert geometry.evaluate_expression(expression, constants) == pytest.approx(
+        expected
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "unknown_name",
+        "1 + unknown_name",
+        "__import__('os')",
+        "'a string'",
+        "[1, 2]",
+        "1 if True else 2",
+        "os.system('echo hi')",
+        "(lambda: 1)()",
+        "not a valid expression at all (",
+    ],
+)
+def test_expression_rejects_unsupported_or_unsafe_syntax(expression):
+    assert geometry.evaluate_expression(expression, {}) is None
+
+
+@pytest.mark.parametrize(
     ("unit", "coordinates"),
     [("mm", (10, -20, 30)), ("cm", (1, -2, 3)), ("m", (0.01, -0.02, 0.03))],
 )

@@ -25,11 +25,11 @@ tests/test_transforms.py tests/test_meshes.py tests/test_invariants.py`.
 
 | Test module | Contract checked |
 | --- | --- |
-| `test_units.py` | Explicit length/angle conversion factors, positions, full box lengths, and unitless length/angle defaults |
+| `test_units.py` | Explicit length/angle conversion factors, positions, full box lengths, unitless length/angle defaults, and safe GDML expression evaluation |
 | `test_transforms.py` | Active basis-vector rotations, composition order, Euler helper order, nested placement bounds, named/inline scale reflection |
 | `test_meshes.py` | Box area, tube/cone radii and extents, cut-plane equations, nondegenerate triangles and closed edges |
 | `test_invariants.py` | Rotation distance preservation, affine composition, unit-equivalent boxes |
-| `test_parser.py` | Small analytic scenes, repeated placements, namespaces, selection flags, named transform references, assembly placement, Boolean first-operand transforms, duplicate-definition and cyclic-reference diagnostics, unsupported-daughter-construct warnings, missing references and approximation warnings |
+| `test_parser.py` | Small analytic scenes, repeated placements, namespaces, selection flags, named transform references, constant/variable expression chains, assembly placement, Boolean first-operand transforms, duplicate-definition and cyclic-reference diagnostics, unsupported-daughter-construct warnings, missing references and approximation warnings |
 | `test_chunks.py` | Independently decoded little-endian payloads, translated vertices, packing, asset reuse |
 | `test_limits.py` | Object caps, complete-object vertex boundaries, empty budgets, lazy overshoot rejection |
 | `test_cli.py`, `test_version.py`, `test_exports.py` | Error/absence paths, launcher version options, portable HTML, script escaping |

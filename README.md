@@ -91,7 +91,11 @@ resolved by name through `positionref`/`rotationref`/`scaleref`. A cyclic
 volume/assembly reference, or nesting beyond 256 levels, raises an actionable
 error, and a duplicate solid/volume/assembly/`<define>` name is reported with
 a warning. `replicavol`/`paramvol`/`divisionvol`/`file` daughters are
-reported with a warning but not expanded. Expressions and several other GDML
+reported with a warning but not expanded. A numeric attribute that is not a
+plain literal is evaluated as a GDML expression (named constants/variables,
+basic arithmetic, and a few math functions, without Python's `eval`); one
+that still fails to evaluate is reported with a warning and falls back to
+its default. `<quantity>`/`<matrix>` defines and several other GDML
 constructs are not fully supported.
 
 The optional backend improves solid tessellation but uses the same local XML

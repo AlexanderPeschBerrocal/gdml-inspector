@@ -258,6 +258,42 @@ def test_paramvol_is_reported_and_treated_as_a_container(write_gdml):
     )
 
 
+def test_constants_and_variables_chain_into_a_dependent_position(single_volume):
+    path = single_volume(
+        '<box name="shape" x="half_x*2" y="4" z="6" lunit="mm"/>',
+        placement='<positionref ref="shift"/>',
+        define="""
+<constant name="half_x" value="1"/>
+<variable name="box_x" value="half_x*2"/>
+<position name="shift" x="box_x*5" y="0" z="0" unit="mm"/>""",
+    )
+    scene = scene_builder(path).build()
+    assert scene["meta"]["warnings"] == []
+    assert scene["meta"]["bbox"] == pytest.approx([9, -2, -3, 11, 2, 3])
+
+
+def test_unitless_expression_uses_the_predefined_pi(single_volume):
+    path = single_volume(
+        '<tube name="shape" rmin="0" rmax="3" z="4" '
+        'startphi="0" deltaphi="2*pi" lunit="mm"/>'
+    )
+    scene = scene_builder(path).build()
+    assert scene["meta"]["warnings"] == []
+    assert scene["meta"]["bbox"] == pytest.approx([-3, -3, -2, 3, 3, 2])
+
+
+def test_unevaluable_expression_is_reported_and_falls_back_to_its_default(
+    single_volume,
+):
+    path = single_volume('<box name="shape" x="unknown_name" y="4" z="6" lunit="mm"/>')
+    scene = scene_builder(path).build()
+    assert any(
+        "Could not evaluate GDML expression x='unknown_name'" in w
+        for w in scene["meta"]["warnings"]
+    )
+    assert scene["meta"]["bbox"] == [0, -2, -3, 0, 2, 3]
+
+
 def test_named_position_reference_moves_the_placed_volume(single_volume):
     path = single_volume(
         placement='<positionref ref="shift"/>',
