@@ -27,9 +27,11 @@ suite is not a claim that those gaps have been fixed.
   for both rotations and solid-angle parameters. A Boolean solid's optional
   `firstposition`/`firstrotation` and its second operand's `position`/
   `rotation` both use the rotation as given, not inverted.
-- Duplicate definitions can overwrite earlier definitions. Deep/cyclic
-  references do not yet receive targeted diagnostics. The CLI reports a failed
-  recursion as an error, but there is no complete reference-graph validator.
+- A duplicate solid/volume/assembly/`<define>` name is reported with a
+  warning, but the later definition still wins; there is no multi-definition
+  indexing like ROOT Explorer's segmented-detector lookup. A cyclic
+  volume/assembly reference, or nesting beyond 256 levels, raises an
+  actionable error instead of exhausting the Python call stack.
 - The optional pyg4ometry backend can improve solid meshes while still using
   these local placement rules. A successful export is not a fidelity guarantee.
 
