@@ -232,7 +232,9 @@ class LazyBuilderMixin:
             placement_name = placement.attrib.get("name", ref)
             child_matrix = base.matmul(
                 matrix,
-                base.placement_matrix(placement, self.positions, self.rotations),
+                base.placement_matrix(
+                    placement, self.positions, self.rotations, self.scales
+                ),
             )
             # Like Geant4, a reference names an assembly before a logical volume.
             # An assembly's physvols are placed relative to its own placement.

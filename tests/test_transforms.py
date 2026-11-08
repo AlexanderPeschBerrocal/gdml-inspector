@@ -6,7 +6,7 @@ import pytest
 
 from gdml_inspector import geometry
 
-from .helpers import scene_builder
+from .helpers import lazy_builder, scene_builder
 
 
 @pytest.mark.parametrize(
@@ -74,3 +74,50 @@ def test_nested_placements_have_analytic_world_bounds(
     assert scene["objects"][0]["path"] == "world/parent/child"
     assert scene["objects"][0]["bbox"] == pytest.approx(expected, abs=1e-10)
     assert scene["meta"]["bbox"] == pytest.approx(expected, abs=1e-10)
+
+
+_NESTED_SOLIDS = """
+<box name="shape" x="2" y="4" z="6" lunit="mm"/>
+<box name="envelope" x="100" y="100" z="100" lunit="mm"/>"""
+_NESTED_STRUCTURE = """
+<volume name="leaf"><materialref ref="G4_Si"/><solidref ref="shape"/></volume>
+<volume name="group"><materialref ref="Galactic"/><solidref ref="envelope"/>
+  <physvol name="child"><volumeref ref="leaf"/>
+    <position x="5" y="0" z="0" unit="mm"/>
+  </physvol>
+</volume>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol name="parent"><volumeref ref="group"/>
+    <position x="10" y="20" z="30" unit="mm"/>
+    {scale}
+  </physvol>
+</volume>"""
+
+
+@pytest.mark.parametrize("mode", ["standalone", "lazy"])
+def test_scale_reflects_the_placed_subtree_before_translation(write_gdml, mode):
+    # A symmetric box alone can't reveal a reflection by its bbox; the child's
+    # off-centre (5,0,0) placement makes the x = -1 reflection observable.
+    path = write_gdml(
+        solids=_NESTED_SOLIDS,
+        structure=_NESTED_STRUCTURE.format(scale='<scale x="-1" y="1" z="1"/>'),
+    )
+    expected = [4, 18, 27, 6, 22, 33]
+    if mode == "standalone":
+        assert scene_builder(path).build()["meta"]["bbox"] == pytest.approx(expected)
+    else:
+        builder = lazy_builder(path)
+        builder.build_chunks()
+        assert builder.global_bbox_min + builder.global_bbox_max == pytest.approx(
+            expected
+        )
+
+
+def test_named_scale_reference_reflects_the_placed_subtree(write_gdml):
+    path = write_gdml(
+        solids=_NESTED_SOLIDS,
+        define='<scale name="flip" x="-1" y="1" z="1"/>',
+        structure=_NESTED_STRUCTURE.format(scale='<scaleref ref="flip"/>'),
+    )
+    scene = scene_builder(path).build()
+    assert scene["meta"]["bbox"] == pytest.approx([4, 18, 27, 6, 22, 33])

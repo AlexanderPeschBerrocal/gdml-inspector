@@ -16,15 +16,17 @@ suite is not a claim that those gaps have been fixed.
   traversed, with an assembly's physvols placed relative to its own placement.
   Replicas, divisions, parameterisation, and external-file references are not
   expanded. Those constructs do not yet consistently emit warnings.
-- Positions and rotations are read inline or resolved by name through
-  `positionref`/`rotationref` against `<define>`; a broken reference raises
-  rather than silently using the identity transform. Scale/reflection and
-  constants/expressions are not resolved. Unparseable numeric values fall back
-  to defaults; unknown units can silently fall back.
+- Positions, rotations, and scales are read inline or resolved by name through
+  `positionref`/`rotationref`/`scaleref` against `<define>`; a broken
+  reference raises rather than silently using the identity transform.
+  Constants/expressions are not resolved. Unparseable numeric values fall
+  back to defaults; unknown units can silently fall back.
 - Physvol placement rotation uses Geant4's inverse convention, reconciled with
-  ROOT Explorer. Angles without an aunit/unit default to radians, per the GDML
-  schema, for both rotations and solid-angle parameters. Boolean operand
-  rotations are unaffected and use the rotation as given.
+  ROOT Explorer; an optional scale, typically a reflection, is applied before
+  it. Angles without an aunit/unit default to radians, per the GDML schema,
+  for both rotations and solid-angle parameters. A Boolean solid's optional
+  `firstposition`/`firstrotation` and its second operand's `position`/
+  `rotation` both use the rotation as given, not inverted.
 - Duplicate definitions can overwrite earlier definitions. Deep/cyclic
   references do not yet receive targeted diagnostics. The CLI reports a failed
   recursion as an error, but there is no complete reference-graph validator.

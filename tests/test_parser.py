@@ -2,7 +2,7 @@
 
 import pytest
 
-from .helpers import scene_builder
+from .helpers import lazy_builder, scene_builder
 
 
 def test_example_counts_buffers_materials_and_endcap_positions(example_gdml):
@@ -116,7 +116,14 @@ def test_missing_position_reference_raises_an_actionable_error(single_volume):
         scene_builder(path).build()
 
 
-def test_assembly_placements_are_relative_to_the_assembly_itself(write_gdml):
+def test_missing_scale_reference_raises_an_actionable_error(single_volume):
+    path = single_volume(placement='<scaleref ref="absent"/>')
+    with pytest.raises(ValueError, match="scale reference: absent"):
+        scene_builder(path).build()
+
+
+@pytest.mark.parametrize("mode", ["standalone", "lazy"])
+def test_assembly_placements_are_relative_to_the_assembly_itself(write_gdml, mode):
     # Assemblies have no solid of their own; only their physvols are placed.
     path = write_gdml(
         solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
@@ -129,9 +136,18 @@ def test_assembly_placements_are_relative_to_the_assembly_itself(write_gdml):
   <physvol><volumeref ref="group"/></physvol>
 </volume>""",
     )
-    scene = scene_builder(path).build()
-    assert scene["meta"]["objects"] == 1
-    assert scene["meta"]["bbox"] == [9, -2, -3, 11, 2, 3]
+    expected = [9, -2, -3, 11, 2, 3]
+    if mode == "standalone":
+        scene = scene_builder(path).build()
+        assert scene["meta"]["objects"] == 1
+        assert scene["meta"]["bbox"] == expected
+    else:
+        builder = lazy_builder(path)
+        builder.build_chunks()
+        assert builder.total_objects == 1
+        assert builder.global_bbox_min + builder.global_bbox_max == pytest.approx(
+            expected
+        )
 
 
 def test_union_positions_its_second_operand_without_claiming_csg_fidelity(
@@ -160,3 +176,29 @@ def test_boolean_fallback_is_identified_as_an_approximation(single_volume, opera
         operation in warning and "approximated" in warning
         for warning in scene["meta"]["warnings"]
     )
+
+
+def test_union_first_operand_transform_is_applied_before_combining(single_volume):
+    path = single_volume("""
+<box name="a" x="2" y="4" z="6" lunit="mm"/>
+<box name="b" x="4" y="2" z="2" lunit="mm"/>
+<union name="shape"><first ref="a"/>
+  <firstposition x="-5" y="0" z="0" unit="mm"/>
+  <second ref="b"/>
+</union>""")
+    scene = scene_builder(path).build()
+    assert scene["meta"]["bbox"] == pytest.approx([-6, -2, -3, 2, 2, 3])
+
+
+def test_subtraction_first_operand_transform_is_applied_before_approximation(
+    single_volume,
+):
+    path = single_volume("""
+<box name="a" x="2" y="4" z="6" lunit="mm"/>
+<box name="b" x="1" y="1" z="1" lunit="mm"/>
+<subtraction name="shape"><first ref="a"/>
+  <firstposition x="5" y="0" z="0" unit="mm"/>
+  <second ref="b"/>
+</subtraction>""")
+    scene = scene_builder(path).build()
+    assert scene["meta"]["bbox"] == pytest.approx([4, -2, -3, 6, 2, 3])
