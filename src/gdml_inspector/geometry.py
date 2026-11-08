@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import math
+import operator
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -40,6 +42,92 @@ UNSUPPORTED_DAUGHTERS = {"replicavol", "paramvol", "divisionvol", "file"}
 # Replicas and divisions fill their mother, which is therefore still drawn as
 # an approximation; parameterised and external daughters make it a container.
 CONTAINER_DAUGHTERS = {"paramvol", "file"}
+# Numeric attributes that may hold a GDML expression instead of a literal
+# number; every other key (name, ref, unit, material, ...) is left alone.
+NUMERIC_EXPRESSION_KEYS = {
+    "x",
+    "y",
+    "z",
+    "rmin",
+    "rmax",
+    "rmin1",
+    "rmax1",
+    "rmin2",
+    "rmax2",
+    "startphi",
+    "deltaphi",
+    "lowX",
+    "lowY",
+    "lowZ",
+    "highX",
+    "highY",
+    "highZ",
+}
+_EXPRESSION_BINARY_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.Mod: operator.mod,
+}
+_EXPRESSION_UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+_EXPRESSION_FUNCTIONS = {
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+    "asin": math.asin,
+    "acos": math.acos,
+    "atan": math.atan,
+    "atan2": math.atan2,
+    "sqrt": math.sqrt,
+    "abs": abs,
+    "pow": pow,
+    "exp": math.exp,
+    "log": math.log,
+}
+
+
+def evaluate_expression(text: str, constants: dict[str, float]) -> float | None:
+    """Safely evaluate a GDML numeric expression without Python's ``eval``.
+
+    Supports named constants/variables, ``+ - * / % **`` (and GDML's ``^`` as
+    an alias for ``**``), parentheses, unary +/-, and a small set of math
+    functions. Returns ``None`` for anything outside that subset -- a
+    disallowed node, an unknown name, or invalid syntax -- so callers fall
+    back to their existing default rather than guessing at an unsupported or
+    malformed expression.
+    """
+
+    def visit(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return visit(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, int | float):
+            return float(node.value)
+        if isinstance(node, ast.Name):
+            if node.id not in constants:
+                raise ValueError(f"Unknown GDML constant or variable: {node.id}")
+            return constants[node.id]
+        if isinstance(node, ast.BinOp) and type(node.op) in _EXPRESSION_BINARY_OPS:
+            op = _EXPRESSION_BINARY_OPS[type(node.op)]
+            return op(visit(node.left), visit(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _EXPRESSION_UNARY_OPS:
+            return _EXPRESSION_UNARY_OPS[type(node.op)](visit(node.operand))
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _EXPRESSION_FUNCTIONS
+            and not node.keywords
+        ):
+            return _EXPRESSION_FUNCTIONS[node.func.id](*(visit(a) for a in node.args))
+        raise ValueError(f"Unsupported GDML expression syntax: {ast.dump(node)}")
+
+    try:
+        tree = ast.parse(text.replace("^", "**"), mode="eval")
+        return float(visit(tree))
+    except (SyntaxError, ValueError, TypeError, ZeroDivisionError, RecursionError):
+        return None
+
 
 MATERIAL_COLORS = {
     "Material_ECAL": (55, 130, 245, 185),
@@ -417,6 +505,7 @@ class GDMLSceneBuilder:
         self.positions: dict[str, ET.Element] = {}
         self.rotations: dict[str, ET.Element] = {}
         self.scales: dict[str, ET.Element] = {}
+        self.constants: dict[str, float] = {"pi": math.pi}
         self.world = ""
         self.mesh_cache: dict[str, tuple[list[Triangle], str]] = {}
         self.scene = Scene()
@@ -432,6 +521,29 @@ class GDMLSceneBuilder:
             self.scene.warn(f"Duplicate GDML {kind} definition: {name}")
         store[name] = el
 
+    def _resolve_expression_attributes(self) -> None:
+        """Rewrite non-numeric-looking attributes in place to their evaluated
+        value, using the constants/variables collected from <define>. Plain
+        numeric literals are left untouched; everything else continues to the
+        element's usual numeric parsing, which already defaults gracefully on
+        unparseable input."""
+        for element in self.root.iter():
+            for key in NUMERIC_EXPRESSION_KEYS.intersection(element.attrib):
+                value = element.attrib[key]
+                try:
+                    float(value)
+                    continue
+                except ValueError:
+                    pass
+                resolved = evaluate_expression(value, self.constants)
+                if resolved is None:
+                    self.scene.warn(
+                        f"Could not evaluate GDML expression {key}={value!r} on "
+                        f"<{tag_name(element)}>; using its default value."
+                    )
+                    continue
+                element.attrib[key] = str(resolved)
+
     def parse(self) -> None:
         solids_el = child(self.root, "solids")
         structure = child(self.root, "structure")
@@ -439,12 +551,33 @@ class GDMLSceneBuilder:
             raise ValueError("GDML must contain <solids> and <structure> sections.")
         define = child(self.root, "define")
         if define is not None:
+            # Evaluated in document order: a constant/variable's value may
+            # reference any name already defined earlier in the same block.
+            for el in list(define):
+                tag = tag_name(el)
+                if tag not in {"constant", "variable"}:
+                    continue
+                name = el.attrib.get("name")
+                if name is None:
+                    continue
+                value_text = el.attrib.get("value", "")
+                value = evaluate_expression(value_text, self.constants)
+                if value is None:
+                    self.scene.warn(
+                        f"Could not evaluate GDML {tag} {name!r} value "
+                        f"{value_text!r}; it is unavailable to other expressions."
+                    )
+                    continue
+                if name in self.constants:
+                    self.scene.warn(f"Duplicate GDML {tag} definition: {name}")
+                self.constants[name] = value
             for el in children(define, "position"):
                 self._register(self.positions, "position", el)
             for el in children(define, "rotation"):
                 self._register(self.rotations, "rotation", el)
             for el in children(define, "scale"):
                 self._register(self.scales, "scale", el)
+        self._resolve_expression_attributes()
         for el in list(solids_el):
             self._register(self.solids, "solid", el)
         for el in children(structure, "assembly"):

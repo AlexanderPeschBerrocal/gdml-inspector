@@ -23,9 +23,14 @@ suite is not a claim that those gaps have been fixed.
   volume.
 - Positions, rotations, and scales are read inline or resolved by name through
   `positionref`/`rotationref`/`scaleref` against `<define>`; a broken
-  reference raises rather than silently using the identity transform.
-  Constants/expressions are not resolved. Unparseable numeric values fall
-  back to defaults; unknown units can silently fall back.
+  reference raises rather than silently using the identity transform. A
+  numeric attribute that is not a plain literal is evaluated as a GDML
+  expression (named `<constant>`/`<variable>` references, `+ - * / % ^`,
+  parentheses, and a small set of math functions, including the predefined
+  `pi`) without using Python's `eval`; one that still cannot be evaluated is
+  reported with a warning and falls back to its default like any other
+  unparseable value. `<quantity>`/`<matrix>` defines are not supported.
+  Unknown units can silently fall back.
 - Physvol placement rotation uses Geant4's inverse convention, reconciled with
   ROOT Explorer and independently confirmed against ROOT's own GDML importer
   (see [reference-validation.md](reference-validation.md)); an optional
