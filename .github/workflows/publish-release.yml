@@ -1,0 +1,78 @@
+name: Publish release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the project uv version
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.6'
+          enable-cache: true
+      - name: Install the locked development environment
+        run: uv sync --locked
+      - name: Re-validate the release independently of the workflow that pushed it
+        run: uv run --no-sync python scripts/check_release.py
+      - name: Build with the locked build tools
+        run: uv run --no-sync python -m build --no-isolation
+      - name: Verify the wheel outside the checkout
+        shell: bash
+        run: |
+          # Same install/CLI smoke check as ci.yml's own wheel verification
+          # step; kept in sync by hand since this one additionally checks
+          # the built package against the pushed tag, not pyproject.toml.
+          TAG="${GITHUB_REF_NAME}"
+          DECLARED_VERSION="${TAG#v}"
+          uv venv /tmp/inspector-wheel
+          uv pip install --python /tmp/inspector-wheel/bin/python dist/*.whl
+          uv pip check --python /tmp/inspector-wheel/bin/python
+          cd /tmp
+          DECLARED_VERSION="$DECLARED_VERSION" /tmp/inspector-wheel/bin/python -I - <<'PY'
+          import os
+          from importlib.metadata import distribution
+
+          package = distribution("gdml-inspector")
+          assert package.metadata.get_all("Provides-Extra") == ["pyg4ometry"]
+          requirements = package.requires or []
+          assert len(requirements) == 1
+          assert requirements[0].startswith("pyg4ometry;")
+          assert "extra ==" in requirements[0]
+          declared = os.environ["DECLARED_VERSION"]
+          assert package.version == declared, (package.version, declared)
+          PY
+          CLI_VERSION=$(/tmp/inspector-wheel/bin/gdml-inspector --version)
+          case "$CLI_VERSION" in
+            *" $DECLARED_VERSION") ;;
+            *) echo "gdml-inspector --version printed '$CLI_VERSION', expected it to end with ' $DECLARED_VERSION'" >&2; exit 1 ;;
+          esac
+          /tmp/inspector-wheel/bin/gdml-inspector "$GITHUB_WORKSPACE/examples/detector.gdml" --backend python --out /tmp/detector.html
+          /tmp/inspector-wheel/bin/gdml-inspector --lazy "$GITHUB_WORKSPACE/examples/detector.gdml" --backend python --out /tmp/detector-lazy.html
+      - name: Extract this version's CHANGELOG section
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          awk -v tag="## [${VERSION}]" '
+            index($0, tag) == 1 {found=1; next}
+            found && index($0, "## [") == 1 {exit}
+            found {print}
+          ' CHANGELOG.md > /tmp/release-notes.md
+          if [ -s /tmp/release-notes.md ]; then
+            echo "NOTES_FLAG=--notes-file=/tmp/release-notes.md" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No CHANGELOG.md section found for ${VERSION}; falling back to generated notes."
+            echo "NOTES_FLAG=--generate-notes" >> "$GITHUB_ENV"
+          fi
+      - name: Create the GitHub Release
+        run: gh release create "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" --verify-tag --title "${GITHUB_REF_NAME}" ${{ env.NOTES_FLAG }} dist/*.whl dist/*.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
