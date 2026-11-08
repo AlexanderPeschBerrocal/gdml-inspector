@@ -47,6 +47,23 @@ suite is not a claim that those gaps have been fixed.
 - The optional pyg4ometry backend can improve solid meshes while still using
   these local placement rules. A successful export is not a fidelity guarantee.
 
+## Diagnostics
+
+- Every warning is also a structured diagnostic (code, severity, category,
+  construct, identifier, backend, occurrence count) in `meta.diagnostics`,
+  with per-severity/per-category totals in `meta.diagnosticSummary`.
+  `meta.warnings` keeps its original human-readable strings for
+  compatibility. `--strict` (optionally widened with `--fail-on`),
+  `--report`, and `--validate-only` read this from the CLI; the browser
+  viewers do not yet filter diagnostics, link one to its tree node, or offer
+  a download button for the report.
+- `--strict`/`--fail-on`/`--report` are not applied by `--reuse-assets`,
+  which only rewrites the HTML shell around existing binary chunks without
+  re-parsing the source GDML.
+- A diagnostic's `identifier` is the raw GDML name/ref/attribute key, not a
+  resolved placement path; several physvols sharing one broken reference
+  aggregate into a single diagnostic with a count, not one per placement.
+
 ## Rendering and size limits
 
 - Union meshes can contain interior surfaces. Subtraction/intersection can look

@@ -11,7 +11,7 @@ def summary(path, mode, **options):
         return meta["objects"], meta["vertices"], meta["warnings"]
     builder = lazy_builder(path, **options)
     builder.build_chunks()
-    return builder.total_objects, builder.total_vertices, list(builder.scene.warnings)
+    return builder.total_objects, builder.total_vertices, builder.scene.warning_messages
 
 
 @pytest.mark.parametrize("mode", ["standalone", "lazy"])
@@ -46,4 +46,4 @@ def test_lazy_vertex_budget_rejects_an_object_that_would_exceed_it(single_volume
     assert builder.total_objects == builder.total_vertices == 0
     assert builder.chunks == {}
     assert builder.stopped_at_limit
-    assert any("limit" in warning for warning in builder.scene.warnings)
+    assert any("limit" in warning for warning in builder.scene.warning_messages)

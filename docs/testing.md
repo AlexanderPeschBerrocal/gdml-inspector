@@ -32,7 +32,8 @@ tests/test_transforms.py tests/test_meshes.py tests/test_invariants.py`.
 | `test_parser.py` | Small analytic scenes, repeated placements, namespaces, selection flags, named transform references, constant/variable expression chains, assembly placement, Boolean first-operand transforms, duplicate-definition and cyclic-reference diagnostics, unsupported-daughter-construct warnings, missing references and approximation warnings |
 | `test_chunks.py` | Independently decoded little-endian payloads, translated vertices, packing, asset reuse |
 | `test_limits.py` | Object caps, complete-object vertex boundaries, empty budgets, lazy overshoot rejection |
-| `test_cli.py`, `test_version.py`, `test_exports.py` | Error/absence paths, launcher version options, portable HTML, script escaping |
+| `test_diagnostics.py` | Diagnostic aggregation by code/construct/identifier, severity/category summaries, every emitted code's shape in both export modes |
+| `test_cli.py`, `test_version.py`, `test_exports.py` | Error/absence paths, launcher version options, portable HTML, script escaping, `--strict`/`--fail-on`/`--report`/`--validate-only` |
 | `test_known_limitations.py` | Desired behaviour for tracked gaps, marked as strict expected failures |
 
 `conftest.py` generates small self-contained files in pytest's temporary

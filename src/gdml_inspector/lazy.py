@@ -263,7 +263,14 @@ class LazyBuilderMixin:
             else:
                 child_volume = self.volumes.get(ref)
                 if child_volume is None:
-                    self.scene.warn(f"Missing volume reference: {ref}")
+                    self.scene.diagnose(
+                        "missing-volume-reference",
+                        "error",
+                        "reference",
+                        "physvol",
+                        f"Missing volume reference: {ref}",
+                        identifier=ref,
+                    )
                     continue
                 self.traverse(
                     child_volume,
@@ -304,9 +311,14 @@ class LazyBuilderMixin:
         }
         for tag, elements in unsupported.items():
             if elements:
-                self.scene.warn(
+                self.scene.diagnose(
+                    "unsupported-daughter",
+                    "warning",
+                    "unsupported",
+                    tag,
                     f"Unsupported GDML daughter construct {tag!r} in volume "
-                    f"{volume.name!r}; not expanded"
+                    f"{volume.name!r}; not expanded",
+                    identifier=volume.name,
                 )
         is_container = (
             bool(placements)
@@ -330,7 +342,13 @@ class LazyBuilderMixin:
             self.global_bbox_min = [-1.0, -1.0, -1.0]
             self.global_bbox_max = [1.0, 1.0, 1.0]
         if self.stopped_at_limit:
-            self.scene.warn("Stopped at configured object/vertex limit")
+            self.scene.diagnose(
+                "limit-reached",
+                "warning",
+                "budget",
+                "export",
+                "Stopped at configured object/vertex limit",
+            )
 
 
 class LazyGDMLSceneBuilder(LazyBuilderMixin, base.GDMLSceneBuilder):
@@ -422,10 +440,9 @@ def write_assets(
         "chunks": chunk_entries,
         "materials": dict(sorted(builder.material_counts.items())),
         "materialColors": material_colors,
-        "warnings": [
-            f"{message} (x{count})" if count > 1 else message
-            for message, count in sorted(builder.scene.warnings.items())
-        ],
+        "warnings": base.format_warnings(builder.scene.diagnostics),
+        "diagnostics": base.diagnostics_list(builder.scene.diagnostics),
+        "diagnosticSummary": base.diagnostics_summary(builder.scene.diagnostics),
         "defaultLoad": list(default_load),
     }
 
@@ -497,6 +514,32 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default=[],
         metavar="SUBSYSTEM",
         help="Subsystem to load when the page opens; repeat or use 'all'",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=f"Exit {base.STRICT_EXIT_CODE} if any diagnostic matches --fail-on "
+        "(default: any error-severity diagnostic)",
+    )
+    parser.add_argument(
+        "--fail-on",
+        action="append",
+        default=[],
+        choices=sorted({*base.DIAGNOSTIC_SEVERITIES, *base.DIAGNOSTIC_CATEGORIES}),
+        metavar="SEVERITY_OR_CATEGORY",
+        help="With --strict, also fail on this diagnostic severity or "
+        "category; repeatable. Defaults to 'error' alone.",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        help="Write the structured diagnostics list as JSON to this path",
+    )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Parse and report diagnostics without writing the HTML viewer or assets",
     )
     parser.add_argument(
         "--reuse-assets",
@@ -585,34 +628,64 @@ def main(argv: Sequence[str] | None = None) -> int:
         chunk_vertices=args.chunk_vertices,
     )
     builder.build_chunks()
-    manifest = write_assets(builder, output, args.default_load)
-    write_html(manifest, output)
-
-    asset_bytes = sum(int(chunk["bytes"]) for chunk in manifest["chunks"])
-    print(f"Wrote {output}")
-    print(f"Assets: {output.parent / (output.stem + '.assets')}")
-    print(
-        f"Subsystem chunks: {len(manifest['chunks']):,}  "
-        f"Objects: {manifest['objects']:,}  Triangles: {manifest['triangles']:,}  "
-        f"Binary: {asset_bytes / (1024 * 1024):.1f} MiB"
-    )
-    for subsystem in sorted(
-        {chunk["subsystem"] for chunk in manifest["chunks"]},
-        key=lambda x: SUBSYSTEM_ORDER.get(x, 99),
-    ):
-        entries = [
-            chunk for chunk in manifest["chunks"] if chunk["subsystem"] == subsystem
-        ]
+    if args.validate_only:
+        diagnostics = base.diagnostics_list(builder.scene.diagnostics)
+        warnings = base.format_warnings(builder.scene.diagnostics)
+        print(f"Validated {args.gdml}; not writing a viewer (--validate-only).")
         print(
-            f"  {subsystem}: {len({entry['layer'] for entry in entries})} layers, "
-            f"{sum(entry['triangles'] for entry in entries):,} triangles, {len(entries)} chunks"
+            f"Objects: {builder.total_objects:,}  "
+            f"Triangles: {builder.total_vertices // 3:,}  "
+            f"Vertices: {builder.total_vertices:,}"
         )
-    if manifest["warnings"]:
+    else:
+        manifest = write_assets(builder, output, args.default_load)
+        write_html(manifest, output)
+        diagnostics = manifest["diagnostics"]
+        warnings = manifest["warnings"]
+        asset_bytes = sum(int(chunk["bytes"]) for chunk in manifest["chunks"])
+        print(f"Wrote {output}")
+        print(f"Assets: {output.parent / (output.stem + '.assets')}")
+        print(
+            f"Subsystem chunks: {len(manifest['chunks']):,}  "
+            f"Objects: {manifest['objects']:,}  Triangles: {manifest['triangles']:,}  "
+            f"Binary: {asset_bytes / (1024 * 1024):.1f} MiB"
+        )
+        for subsystem in sorted(
+            {chunk["subsystem"] for chunk in manifest["chunks"]},
+            key=lambda x: SUBSYSTEM_ORDER.get(x, 99),
+        ):
+            entries = [
+                chunk for chunk in manifest["chunks"] if chunk["subsystem"] == subsystem
+            ]
+            print(
+                f"  {subsystem}: {len({entry['layer'] for entry in entries})} layers, "
+                f"{sum(entry['triangles'] for entry in entries):,} triangles, "
+                f"{len(entries)} chunks"
+            )
+    if warnings:
         print("Warnings:")
-        for warning in manifest["warnings"][:8]:
+        for warning in warnings[:8]:
             print(f"  - {warning}")
-        if len(manifest["warnings"]) > 8:
-            print(f"  - ... {len(manifest['warnings']) - 8} more")
+        if len(warnings) > 8:
+            print(f"  - ... {len(warnings) - 8} more")
+    if args.report is not None:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
+        print(f"Wrote diagnostics report {args.report}")
+    if args.strict:
+        fail_on = set(args.fail_on) or {"error"}
+        blocking = base.diagnostics_matching(diagnostics, fail_on)
+        if blocking:
+            print(
+                f"Strict validation failed: {len(blocking)} diagnostic(s) match "
+                f"{sorted(fail_on)}.",
+                file=sys.stderr,
+            )
+            for item in blocking[:8]:
+                print(f"  - {item['message']}", file=sys.stderr)
+            return base.STRICT_EXIT_CODE
+    if args.validate_only:
+        return 0
     print(
         "Open through HTTP (use --serve); direct file:// loading cannot fetch chunks."
     )

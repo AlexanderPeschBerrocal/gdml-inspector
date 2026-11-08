@@ -1,5 +1,6 @@
 """Error paths and optional-backend absence without a native installation."""
 
+import json
 import sys
 
 import pytest
@@ -60,3 +61,152 @@ def test_auto_backend_exports_without_native_dependencies(
     )
     assert output.is_file()
     assert "pure-Python backend" in capsys.readouterr().out
+
+
+@pytest.fixture
+def broken_reference_gdml(write_gdml):
+    return write_gdml(
+        solids="",
+        structure="""<volume name="world"><materialref ref="Galactic"/>
+<solidref ref="world_box"/>
+<physvol><volumeref ref="absent"/></physvol></volume>""",
+    )
+
+
+@pytest.mark.parametrize("mode", [[], ["--lazy"]])
+def test_strict_exits_nonzero_for_an_error_severity_diagnostic(
+    mode, broken_reference_gdml, tmp_path, capsys
+):
+    output = tmp_path / "out.html"
+    assert (
+        cli.main(
+            [
+                *mode,
+                str(broken_reference_gdml),
+                "--backend",
+                "python",
+                "--validate-only",
+                "--strict",
+                "--out",
+                str(output),
+            ]
+        )
+        == 5
+    )
+    assert "Strict validation failed" in capsys.readouterr().err
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("mode", [[], ["--lazy"]])
+def test_strict_still_writes_the_viewer_without_validate_only(
+    mode, broken_reference_gdml, tmp_path
+):
+    output = tmp_path / "out.html"
+    assert (
+        cli.main(
+            [
+                *mode,
+                str(broken_reference_gdml),
+                "--backend",
+                "python",
+                "--strict",
+                "--out",
+                str(output),
+            ]
+        )
+        == 5
+    )
+    assert output.is_file()
+
+
+@pytest.mark.parametrize("mode", [[], ["--lazy"]])
+def test_strict_passes_a_clean_geometry(mode, example_gdml, tmp_path):
+    output = tmp_path / "out.html"
+    assert (
+        cli.main(
+            [
+                *mode,
+                str(example_gdml),
+                "--backend",
+                "python",
+                "--strict",
+                "--out",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert output.is_file()
+
+
+@pytest.mark.parametrize("mode", [[], ["--lazy"]])
+def test_validate_only_does_not_write_a_viewer(mode, example_gdml, tmp_path):
+    output = tmp_path / "out.html"
+    assert (
+        cli.main(
+            [
+                *mode,
+                str(example_gdml),
+                "--backend",
+                "python",
+                "--validate-only",
+                "--out",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("mode", [[], ["--lazy"]])
+def test_report_writes_the_structured_diagnostics_json(
+    mode, broken_reference_gdml, tmp_path
+):
+    report = tmp_path / "report.json"
+    assert (
+        cli.main(
+            [
+                *mode,
+                str(broken_reference_gdml),
+                "--backend",
+                "python",
+                "--validate-only",
+                "--report",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    diagnostics = json.loads(report.read_text())
+    assert diagnostics == [
+        {
+            "code": "missing-volume-reference",
+            "severity": "error",
+            "category": "reference",
+            "construct": "physvol",
+            "identifier": "absent",
+            "backend": "",
+            "message": "Missing volume reference: absent",
+            "count": 1,
+        }
+    ]
+
+
+@pytest.mark.parametrize("mode", [[], ["--lazy"]])
+def test_fail_on_extends_strict_beyond_error_severity(mode, single_volume, tmp_path):
+    # An unresolvable expression is only a warning/numeric diagnostic, so
+    # --strict alone should pass; --fail-on numeric should also catch it.
+    path = single_volume('<box name="shape" x="unknown_name" y="4" z="6" lunit="mm"/>')
+    base_args = [
+        *mode,
+        str(path),
+        "--backend",
+        "python",
+        "--validate-only",
+        "--strict",
+        "--out",
+        str(tmp_path / "out.html"),
+    ]
+    assert cli.main(base_args) == 0
+    assert cli.main([*base_args, "--fail-on", "numeric"]) == 5

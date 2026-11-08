@@ -467,18 +467,126 @@ class VolumeDef:
     seq: int
 
 
+# Severities that a --strict export can be told to fail on.
+DIAGNOSTIC_SEVERITIES = ("error", "warning")
+# Classifies *why* a diagnostic exists, independent of how serious it is:
+# a GDML construct this backend does not implement, a reference that does
+# not resolve, a configured object/vertex budget, a numeric expression that
+# could not be evaluated, or a solid that one backend could not mesh.
+DIAGNOSTIC_CATEGORIES = ("unsupported", "reference", "budget", "numeric", "backend")
+# Both CLIs exit with this code for a --strict validation failure, distinct
+# from their other documented exit codes (2: input not found, 3: requested
+# backend unavailable, 4: lazy --reuse-assets failure).
+STRICT_EXIT_CODE = 5
+
+
+@dataclass
+class Diagnostic:
+    code: str
+    severity: str
+    category: str
+    construct: str
+    message: str
+    identifier: str = ""
+    backend: str = ""
+    count: int = 1
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "code": self.code,
+            "severity": self.severity,
+            "category": self.category,
+            "construct": self.construct,
+            "identifier": self.identifier,
+            "backend": self.backend,
+            "message": self.message,
+            "count": self.count,
+        }
+
+
 @dataclass
 class Scene:
     positions: list[float] = field(default_factory=list)
     colors: list[int] = field(default_factory=list)
     ids: list[int] = field(default_factory=list)
     objects: list[dict[str, object]] = field(default_factory=list)
-    warnings: dict[str, int] = field(default_factory=dict)
+    diagnostics: dict[tuple[str, str, str], Diagnostic] = field(default_factory=dict)
     bbox_min: list[float] = field(default_factory=lambda: [float("inf")] * 3)
     bbox_max: list[float] = field(default_factory=lambda: [float("-inf")] * 3)
 
-    def warn(self, message: str) -> None:
-        self.warnings[message] = self.warnings.get(message, 0) + 1
+    def diagnose(
+        self,
+        code: str,
+        severity: str,
+        category: str,
+        construct: str,
+        message: str,
+        identifier: str = "",
+        backend: str = "",
+    ) -> None:
+        """Record a diagnostic, aggregating repeats of the same code/construct/
+        identifier into a single entry with an occurrence count."""
+        key = (code, construct, identifier)
+        existing = self.diagnostics.get(key)
+        if existing is not None:
+            existing.count += 1
+            return
+        self.diagnostics[key] = Diagnostic(
+            code=code,
+            severity=severity,
+            category=category,
+            construct=construct,
+            message=message,
+            identifier=identifier,
+            backend=backend,
+        )
+
+    @property
+    def warning_messages(self) -> list[str]:
+        """Human-readable messages, one per distinct diagnostic (no counts)."""
+        return [d.message for d in self.diagnostics.values()]
+
+
+def format_warnings(diagnostics: dict[tuple[str, str, str], Diagnostic]) -> list[str]:
+    """The pre-existing human-readable ``meta.warnings`` shape: one line per
+    distinct diagnostic, annotated with a repeat count above one."""
+    return [
+        f"{d.message} (x{d.count})" if d.count > 1 else d.message
+        for d in sorted(diagnostics.values(), key=lambda d: d.message)
+    ]
+
+
+def diagnostics_list(
+    diagnostics: dict[tuple[str, str, str], Diagnostic],
+) -> list[dict[str, object]]:
+    return [
+        d.as_dict()
+        for d in sorted(
+            diagnostics.values(), key=lambda d: (d.code, d.construct, d.identifier)
+        )
+    ]
+
+
+def diagnostics_summary(
+    diagnostics: dict[tuple[str, str, str], Diagnostic],
+) -> dict[str, dict[str, int]]:
+    by_severity = dict.fromkeys(DIAGNOSTIC_SEVERITIES, 0)
+    by_category = dict.fromkeys(DIAGNOSTIC_CATEGORIES, 0)
+    for d in diagnostics.values():
+        by_severity[d.severity] = by_severity.get(d.severity, 0) + d.count
+        by_category[d.category] = by_category.get(d.category, 0) + d.count
+    return {"bySeverity": by_severity, "byCategory": by_category}
+
+
+def diagnostics_matching(
+    diagnostics: list[dict[str, object]], fail_on: set[str]
+) -> list[dict[str, object]]:
+    """Entries from a serialized ``meta.diagnostics`` list whose severity or
+    category is in ``fail_on``; used by each CLI's ``--strict``, which fails
+    on 'error' severity by default."""
+    return [
+        d for d in diagnostics if d["severity"] in fail_on or d["category"] in fail_on
+    ]
 
 
 class GDMLSceneBuilder:
@@ -518,7 +626,14 @@ class GDMLSceneBuilder:
         if name is None:
             return
         if name in store:
-            self.scene.warn(f"Duplicate GDML {kind} definition: {name}")
+            self.scene.diagnose(
+                "duplicate-definition",
+                "warning",
+                "reference",
+                kind,
+                f"Duplicate GDML {kind} definition: {name}",
+                identifier=name,
+            )
         store[name] = el
 
     def _resolve_expression_attributes(self) -> None:
@@ -537,9 +652,15 @@ class GDMLSceneBuilder:
                     pass
                 resolved = evaluate_expression(value, self.constants)
                 if resolved is None:
-                    self.scene.warn(
+                    construct = tag_name(element)
+                    self.scene.diagnose(
+                        "unevaluable-expression",
+                        "warning",
+                        "numeric",
+                        construct,
                         f"Could not evaluate GDML expression {key}={value!r} on "
-                        f"<{tag_name(element)}>; using its default value."
+                        f"<{construct}>; using its default value.",
+                        identifier=key,
                     )
                     continue
                 element.attrib[key] = str(resolved)
@@ -563,13 +684,25 @@ class GDMLSceneBuilder:
                 value_text = el.attrib.get("value", "")
                 value = evaluate_expression(value_text, self.constants)
                 if value is None:
-                    self.scene.warn(
+                    self.scene.diagnose(
+                        "unevaluable-expression",
+                        "warning",
+                        "numeric",
+                        tag,
                         f"Could not evaluate GDML {tag} {name!r} value "
-                        f"{value_text!r}; it is unavailable to other expressions."
+                        f"{value_text!r}; it is unavailable to other expressions.",
+                        identifier=name,
                     )
                     continue
                 if name in self.constants:
-                    self.scene.warn(f"Duplicate GDML {tag} definition: {name}")
+                    self.scene.diagnose(
+                        "duplicate-definition",
+                        "warning",
+                        "reference",
+                        tag,
+                        f"Duplicate GDML {tag} definition: {name}",
+                        identifier=name,
+                    )
                 self.constants[name] = value
             for el in children(define, "position"):
                 self._register(self.positions, "position", el)
@@ -588,7 +721,14 @@ class GDMLSceneBuilder:
             seq = counts.get(name, 0)
             counts[name] = seq + 1
             if name in self.volumes:
-                self.scene.warn(f"Duplicate GDML volume definition: {name}")
+                self.scene.diagnose(
+                    "duplicate-definition",
+                    "warning",
+                    "reference",
+                    "volume",
+                    f"Duplicate GDML volume definition: {name}",
+                    identifier=name,
+                )
             mat = child(el, "materialref")
             solid = child(el, "solidref")
             self.volumes[name] = VolumeDef(
@@ -611,7 +751,14 @@ class GDMLSceneBuilder:
             return self.mesh_cache[ref]
         el = self.solids.get(ref)
         if el is None:
-            self.scene.warn(f"Missing solid reference: {ref}")
+            self.scene.diagnose(
+                "missing-solid-reference",
+                "error",
+                "reference",
+                "solidref",
+                f"Missing solid reference: {ref}",
+                identifier=ref,
+            )
             self.mesh_cache[ref] = ([], "missing")
             return self.mesh_cache[ref]
         kind = tag_name(el)
@@ -639,13 +786,27 @@ class GDMLSceneBuilder:
                 )
                 tris = tris + transform_mesh(tris2, m)
             else:
-                self.scene.warn(
-                    f"{kind} solid {ref} approximated by first operand {first_ref}"
+                self.scene.diagnose(
+                    "boolean-approximated",
+                    "warning",
+                    "unsupported",
+                    kind,
+                    f"{kind} solid {ref} approximated by first operand {first_ref}",
+                    identifier=ref,
+                    backend=self.backend_name,
                 )
             kind = f"{kind}/{subkind}"
         else:
             tris = []
-            self.scene.warn(f"Unsupported solid type {kind}: {ref}")
+            self.scene.diagnose(
+                "unsupported-solid-type",
+                "error",
+                "unsupported",
+                kind,
+                f"Unsupported solid type {kind}: {ref}",
+                identifier=ref,
+                backend=self.backend_name,
+            )
         self.mesh_cache[ref] = (tris, kind)
         return self.mesh_cache[ref]
 
@@ -727,7 +888,14 @@ class GDMLSceneBuilder:
             else:
                 child_vol = self.volumes.get(ref)
                 if child_vol is None:
-                    self.scene.warn(f"Missing volume reference: {ref}")
+                    self.scene.diagnose(
+                        "missing-volume-reference",
+                        "error",
+                        "reference",
+                        "physvol",
+                        f"Missing volume reference: {ref}",
+                        identifier=ref,
+                    )
                     continue
                 self.traverse(
                     child_vol, child_matrix, f"{path}/{pv_name}", depth + 1, ancestors
@@ -736,7 +904,13 @@ class GDMLSceneBuilder:
                 len(self.scene.objects) >= self.max_objects
                 or len(self.scene.positions) // 3 >= self.max_vertices
             ):
-                self.scene.warn("Stopped at configured object/vertex limit")
+                self.scene.diagnose(
+                    "limit-reached",
+                    "warning",
+                    "budget",
+                    "export",
+                    "Stopped at configured object/vertex limit",
+                )
                 return
 
     def traverse(
@@ -766,9 +940,14 @@ class GDMLSceneBuilder:
         }
         for tag, elements in unsupported.items():
             if elements:
-                self.scene.warn(
+                self.scene.diagnose(
+                    "unsupported-daughter",
+                    "warning",
+                    "unsupported",
+                    tag,
                     f"Unsupported GDML daughter construct {tag!r} in volume "
-                    f"{volume.name!r}; not expanded"
+                    f"{volume.name!r}; not expanded",
+                    identifier=volume.name,
                 )
         container = (
             bool(phys)
@@ -824,10 +1003,9 @@ class GDMLSceneBuilder:
                 "materialColors": material_colors,
                 "solidTypes": solid_types,
                 "semanticVolumeCounts": dict(sorted(bases.items())),
-                "warnings": [
-                    f"{msg} (x{n})" if n > 1 else msg
-                    for msg, n in sorted(self.scene.warnings.items())
-                ],
+                "warnings": format_warnings(self.scene.diagnostics),
+                "diagnostics": diagnostics_list(self.scene.diagnostics),
+                "diagnosticSummary": diagnostics_summary(self.scene.diagnostics),
             },
             "positions": self.scene.positions,
             "colors": self.scene.colors,

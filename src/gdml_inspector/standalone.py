@@ -12,7 +12,14 @@ from importlib.resources import files
 from pathlib import Path
 
 from . import __version__
-from .geometry import QUALITY_SEGMENTS, GDMLSceneBuilder
+from .geometry import (
+    DIAGNOSTIC_CATEGORIES,
+    DIAGNOSTIC_SEVERITIES,
+    QUALITY_SEGMENTS,
+    STRICT_EXIT_CODE,
+    GDMLSceneBuilder,
+    diagnostics_matching,
+)
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder, debug_pyg4ometry_mesh
 from .server import serve_file
 
@@ -62,6 +69,32 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--max-objects", type=int, default=100_000)
     parser.add_argument("--max-vertices", type=int, default=5_000_000)
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=f"Exit {STRICT_EXIT_CODE} if any diagnostic matches --fail-on "
+        "(default: any error-severity diagnostic)",
+    )
+    parser.add_argument(
+        "--fail-on",
+        action="append",
+        default=[],
+        choices=sorted({*DIAGNOSTIC_SEVERITIES, *DIAGNOSTIC_CATEGORIES}),
+        metavar="SEVERITY_OR_CATEGORY",
+        help="With --strict, also fail on this diagnostic severity or "
+        "category; repeatable. Defaults to 'error' alone.",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        help="Write the structured diagnostics list as JSON to this path",
+    )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Parse and report diagnostics without writing the HTML viewer",
+    )
     parser.add_argument(
         "--debug-pyg4ometry-mesh",
         action="store_true",
@@ -123,9 +156,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_vertices=args.max_vertices,
     )
     scene = builder.build()
-    write_html(scene, output)
     meta = scene["meta"]  # type: ignore[index]
-    print(f"Wrote {output}")
+    if args.validate_only:
+        print(f"Validated {args.gdml}; not writing a viewer (--validate-only).")
+    else:
+        write_html(scene, output)
+        print(f"Wrote {output}")
     print(
         f"Objects: {meta['objects']:,}  Triangles: {meta['triangles']:,}  Vertices: {meta['vertices']:,}"
     )  # type: ignore[index]
@@ -136,6 +172,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"  - {item}")
         if len(warnings) > 8:
             print(f"  - ... {len(warnings) - 8} more")
+    if args.report is not None:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(
+            json.dumps(meta["diagnostics"], indent=2),
+            encoding="utf-8",  # type: ignore[index]
+        )
+        print(f"Wrote diagnostics report {args.report}")
+    if args.strict:
+        fail_on = set(args.fail_on) or {"error"}
+        blocking = diagnostics_matching(meta["diagnostics"], fail_on)  # type: ignore[index]
+        if blocking:
+            print(
+                f"Strict validation failed: {len(blocking)} diagnostic(s) match "
+                f"{sorted(fail_on)}.",
+                file=sys.stderr,
+            )
+            for item in blocking[:8]:
+                print(f"  - {item['message']}", file=sys.stderr)
+            return STRICT_EXIT_CODE
+    if args.validate_only:
+        return 0
     if args.serve:
         serve_file(output, args.port, open_browser=not args.no_browser)
     return 0
