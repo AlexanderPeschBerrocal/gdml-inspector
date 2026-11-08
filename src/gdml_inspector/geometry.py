@@ -35,6 +35,11 @@ QUALITY_SEGMENTS = {"fast": 12, "medium": 24, "high": 48}
 # Matches ROOT Explorer's limit: deep enough for real detectors, shallow
 # enough to fail with an actionable error well before the Python call stack.
 MAX_NESTING_DEPTH = 256
+# Daughter constructs that are not expanded.
+UNSUPPORTED_DAUGHTERS = {"replicavol", "paramvol", "divisionvol", "file"}
+# Replicas and divisions fill their mother, which is therefore still drawn as
+# an approximation; parameterised and external daughters make it a container.
+CONTAINER_DAUGHTERS = {"paramvol", "file"}
 
 MATERIAL_COLORS = {
     "Material_ECAL": (55, 130, 245, 185),
@@ -623,7 +628,20 @@ class GDMLSceneBuilder:
             )
         ancestors = ancestors | {key}
         phys = children(volume.element, "physvol")
-        container = bool(phys) or volume.material.startswith("Galactic")
+        unsupported = {
+            tag: children(volume.element, tag) for tag in UNSUPPORTED_DAUGHTERS
+        }
+        for tag, elements in unsupported.items():
+            if elements:
+                self.scene.warn(
+                    f"Unsupported GDML daughter construct {tag!r} in volume "
+                    f"{volume.name!r}; not expanded"
+                )
+        container = (
+            bool(phys)
+            or volume.material.startswith("Galactic")
+            or any(unsupported[tag] for tag in CONTAINER_DAUGHTERS)
+        )
         render = (self.include_containers or not container) and (
             self.include_world or volume.name != self.world
         )

@@ -298,7 +298,21 @@ class LazyBuilderMixin:
             )
         ancestors = ancestors | {key}
         placements = base.children(volume.element, "physvol")
-        is_container = bool(placements) or volume.material.startswith("Galactic")
+        unsupported = {
+            tag: base.children(volume.element, tag)
+            for tag in base.UNSUPPORTED_DAUGHTERS
+        }
+        for tag, elements in unsupported.items():
+            if elements:
+                self.scene.warn(
+                    f"Unsupported GDML daughter construct {tag!r} in volume "
+                    f"{volume.name!r}; not expanded"
+                )
+        is_container = (
+            bool(placements)
+            or volume.material.startswith("Galactic")
+            or any(unsupported[tag] for tag in base.CONTAINER_DAUGHTERS)
+        )
         should_render = (self.include_containers or not is_container) and (
             self.include_world or volume.name != self.world
         )

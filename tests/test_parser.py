@@ -215,6 +215,49 @@ def test_unsupported_solid_is_reported_as_skipped(single_volume):
     assert any("Unsupported solid type sphere" in w for w in scene["meta"]["warnings"])
 
 
+def test_replicavol_is_reported_and_the_mother_still_renders(write_gdml):
+    # Replicas fill their mother, so it is still drawn as an approximation.
+    path = write_gdml(
+        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        structure="""
+<volume name="leaf"><materialref ref="G4_Si"/><solidref ref="shape"/>
+  <replicavol/>
+</volume>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol><volumeref ref="leaf"/></physvol>
+</volume>""",
+    )
+    scene = scene_builder(path).build()
+    assert scene["meta"]["objects"] == 1
+    assert any(
+        "Unsupported GDML daughter construct 'replicavol' in volume 'leaf'" in w
+        for w in scene["meta"]["warnings"]
+    )
+
+
+def test_paramvol_is_reported_and_treated_as_a_container(write_gdml):
+    # Parameterised daughters are not expanded, so the mother is hidden by
+    # default like any other container, rather than drawn as an approximation.
+    path = write_gdml(
+        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        structure="""
+<volume name="leaf"><materialref ref="G4_Si"/><solidref ref="shape"/>
+  <paramvol/>
+</volume>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol><volumeref ref="leaf"/></physvol>
+</volume>""",
+    )
+    hidden = scene_builder(path).build()
+    shown = scene_builder(path, include_containers=True).build()
+    assert hidden["meta"]["objects"] == 0
+    assert shown["meta"]["objects"] == 1
+    assert any(
+        "Unsupported GDML daughter construct 'paramvol' in volume 'leaf'" in w
+        for w in hidden["meta"]["warnings"]
+    )
+
+
 def test_named_position_reference_moves_the_placed_volume(single_volume):
     path = single_volume(
         placement='<positionref ref="shift"/>',

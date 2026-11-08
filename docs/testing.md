@@ -4,6 +4,10 @@ The base suite exercises the bundled Python backend with original synthetic
 GDML inputs and standard Python numerical checks. It needs no ROOT, Geant4,
 pyg4ometry, detector downloads, or browser. Dependencies are in the local `test`
 group; none are runtime requirements of the viewer.
+[`reference-validation.md`](reference-validation.md) documents a separate,
+manual, one-time comparison of the placement conventions below against ROOT's
+GDML importer, using a script that is not part of this suite for the same
+reason.
 
 ```bash
 uv sync --locked --no-default-groups --group test
@@ -25,7 +29,7 @@ tests/test_transforms.py tests/test_meshes.py tests/test_invariants.py`.
 | `test_transforms.py` | Active basis-vector rotations, composition order, Euler helper order, nested placement bounds, named/inline scale reflection |
 | `test_meshes.py` | Box area, tube/cone radii and extents, cut-plane equations, nondegenerate triangles and closed edges |
 | `test_invariants.py` | Rotation distance preservation, affine composition, unit-equivalent boxes |
-| `test_parser.py` | Small analytic scenes, repeated placements, namespaces, selection flags, named transform references, assembly placement, Boolean first-operand transforms, duplicate-definition and cyclic-reference diagnostics, missing references and approximation warnings |
+| `test_parser.py` | Small analytic scenes, repeated placements, namespaces, selection flags, named transform references, assembly placement, Boolean first-operand transforms, duplicate-definition and cyclic-reference diagnostics, unsupported-daughter-construct warnings, missing references and approximation warnings |
 | `test_chunks.py` | Independently decoded little-endian payloads, translated vertices, packing, asset reuse |
 | `test_limits.py` | Object caps, complete-object vertex boundaries, empty budgets, lazy overshoot rejection |
 | `test_cli.py`, `test_version.py`, `test_exports.py` | Error/absence paths, launcher version options, portable HTML, script escaping |

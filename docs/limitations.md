@@ -2,7 +2,9 @@
 
 This release packages the existing COCOA viewers. It does not establish full
 GDML conformance. Inspect the warnings and compare important geometry against a
-trusted source before drawing conclusions from a rendered alignment.
+trusted source before drawing conclusions from a rendered alignment; see
+[reference-validation.md](reference-validation.md) for one such comparison,
+run once against ROOT's TGeo GDML importer.
 
 The [testing guide](testing.md) distinguishes independently verified operations
 from two strict expected-failure regressions for tracked gaps. A passing base
@@ -14,19 +16,24 @@ suite is not a claim that those gaps have been fixed.
   Boolean meshing. Other solid types are skipped with warnings.
 - Ordinary nested `volume`/`physvol` placements and `assembly` groups are
   traversed, with an assembly's physvols placed relative to its own placement.
-  Replicas, divisions, parameterisation, and external-file references are not
-  expanded. Those constructs do not yet consistently emit warnings.
+  `replicavol`/`paramvol`/`divisionvol`/`file` daughters are reported with a
+  warning but not expanded; a replica or division still draws its mother as
+  an approximation of the whole, while a parameterised or external daughter
+  hides its mother as an unrendered container, like any other container
+  volume.
 - Positions, rotations, and scales are read inline or resolved by name through
   `positionref`/`rotationref`/`scaleref` against `<define>`; a broken
   reference raises rather than silently using the identity transform.
   Constants/expressions are not resolved. Unparseable numeric values fall
   back to defaults; unknown units can silently fall back.
 - Physvol placement rotation uses Geant4's inverse convention, reconciled with
-  ROOT Explorer; an optional scale, typically a reflection, is applied before
-  it. Angles without an aunit/unit default to radians, per the GDML schema,
-  for both rotations and solid-angle parameters. A Boolean solid's optional
-  `firstposition`/`firstrotation` and its second operand's `position`/
-  `rotation` both use the rotation as given, not inverted.
+  ROOT Explorer and independently confirmed against ROOT's own GDML importer
+  (see [reference-validation.md](reference-validation.md)); an optional
+  scale, typically a reflection, is applied before it. Angles without an
+  aunit/unit default to radians, per the GDML schema, for both rotations and
+  solid-angle parameters. A Boolean solid's optional `firstposition`/
+  `firstrotation` and its second operand's `position`/`rotation` both use the
+  rotation as given, not inverted.
 - A duplicate solid/volume/assembly/`<define>` name is reported with a
   warning, but the later definition still wins; there is no multi-definition
   indexing like ROOT Explorer's segmented-detector lookup. A cyclic
