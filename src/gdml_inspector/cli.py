@@ -9,7 +9,7 @@ from xml.etree.ElementTree import ParseError
 from . import diff, gltf, lazy, standalone
 
 
-def _run(command: Callable, argv: Sequence[str]) -> int:
+def _run(command: Callable[[Sequence[str] | None], int], argv: Sequence[str]) -> int:
     try:
         return command(argv)
     except KeyboardInterrupt:

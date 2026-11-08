@@ -205,6 +205,7 @@ uv sync --locked
 uv run --no-sync pytest
 uv run --no-sync python -m ruff check .
 uv run --no-sync python -m ruff format --check .
+uv run --no-sync mypy
 uv run --no-sync python -m build --no-isolation
 ```
 
@@ -215,7 +216,7 @@ invariant checks, tracked expected failures, and initial coverage baseline.
 
 `.python-version` selects Python 3.12.16 for development; the package still
 supports Python 3.10 and newer. The default `dev` group includes the separate
-`test`, `lint`, `build`, and `hooks` groups. Optional pyg4ometry is not installed
+`test`, `lint`, `typing`, `build`, and `hooks` groups. Optional pyg4ometry is not installed
 unless requested with `uv sync --locked --extra pyg4ometry`. Ordinary pip
 installations continue to use the package metadata independently of `uv.lock`.
 

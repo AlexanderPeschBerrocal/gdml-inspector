@@ -18,14 +18,15 @@ from .geometry import (
     QUALITY_SEGMENTS,
     STRICT_EXIT_CODE,
     GDMLSceneBuilder,
+    SceneDict,
     diagnostics_matching,
 )
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder, debug_pyg4ometry_mesh
 from .server import serve_file
 
 
-def write_html(scene: dict[str, object], output: Path) -> None:
-    title = html.escape(Path(str(scene["meta"]["source"])).name)  # type: ignore[index]
+def write_html(scene: SceneDict, output: Path) -> None:
+    title = html.escape(Path(scene["meta"]["source"]).name)
     output.write_text(
         files("gdml_inspector.assets")
         .joinpath("standalone.html")
@@ -140,10 +141,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    builder_cls = GDMLSceneBuilder
+    builder_cls: type[GDMLSceneBuilder] = GDMLSceneBuilder
     if args.backend in {"auto", "pyg4ometry"}:
         try:
-            import pyg4ometry  # type: ignore  # noqa: F401
+            import pyg4ometry  # noqa: F401
 
             builder_cls = Pyg4ometrySceneBuilder
             print("Using pyg4ometry backend for solid tessellation.")
@@ -166,7 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_vertices=args.max_vertices,
     )
     scene = builder.build()
-    meta = scene["meta"]  # type: ignore[index]
+    meta = scene["meta"]
     if args.validate_only:
         print(f"Validated {args.gdml}; not writing a viewer (--validate-only).")
     else:
@@ -174,32 +175,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Wrote {output}")
     print(
         f"Objects: {meta['objects']:,}  Triangles: {meta['triangles']:,}  Vertices: {meta['vertices']:,}"
-    )  # type: ignore[index]
-    warnings = meta.get("warnings", [])  # type: ignore[union-attr]
+    )
+    warnings = meta["warnings"]
     if warnings:
         print("Warnings:")
-        for item in warnings[:8]:
-            print(f"  - {item}")
+        for warning in warnings[:8]:
+            print(f"  - {warning}")
         if len(warnings) > 8:
             print(f"  - ... {len(warnings) - 8} more")
     if args.report is not None:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(
             json.dumps(meta["diagnostics"], indent=2),
-            encoding="utf-8",  # type: ignore[index]
+            encoding="utf-8",
         )
         print(f"Wrote diagnostics report {args.report}")
     if args.strict:
         fail_on = set(args.fail_on) or {"error"}
-        blocking = diagnostics_matching(meta["diagnostics"], fail_on)  # type: ignore[index]
+        blocking = diagnostics_matching(meta["diagnostics"], fail_on)
         if blocking:
             print(
                 f"Strict validation failed: {len(blocking)} diagnostic(s) match "
                 f"{sorted(fail_on)}.",
                 file=sys.stderr,
             )
-            for item in blocking[:8]:
-                print(f"  - {item['message']}", file=sys.stderr)
+            for diagnostic in blocking[:8]:
+                print(f"  - {diagnostic['message']}", file=sys.stderr)
             return STRICT_EXIT_CODE
     if args.validate_only:
         return 0

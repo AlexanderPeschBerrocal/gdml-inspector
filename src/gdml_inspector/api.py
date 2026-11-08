@@ -128,10 +128,12 @@ class Geometry:
         pyg4ometry at all. Unlike the CLI modes, nothing is printed to
         stdout -- this is a library call.
         """
-        builder_cls = ApiGDMLSceneBuilder
+        builder_cls: type[ApiGDMLSceneBuilder] | type[ApiPyg4ometrySceneBuilder] = (
+            ApiGDMLSceneBuilder
+        )
         if backend in {"auto", "pyg4ometry"}:
             try:
-                import pyg4ometry  # type: ignore  # noqa: F401
+                import pyg4ometry  # noqa: F401
 
                 builder_cls = ApiPyg4ometrySceneBuilder
             except ModuleNotFoundError:
@@ -159,24 +161,45 @@ class Geometry:
             )
             for obj in builder.scene.objects
         )
+        bbox_min, bbox_max = builder.scene.bbox_min, builder.scene.bbox_max
         return cls(
             placements=placements,
             solids=dict(builder._solids),
             diagnostics=tuple(builder.scene.diagnostics.values()),
-            bounds=Bounds(tuple(builder.scene.bbox_min), tuple(builder.scene.bbox_max)),
+            bounds=Bounds(
+                (bbox_min[0], bbox_min[1], bbox_min[2]),
+                (bbox_max[0], bbox_max[1], bbox_max[2]),
+            ),
             source=gdml,
             backend=builder.backend_name,
         )
 
 
-class ApiMixin:
+class ApiMixin(base.GDMLSceneBuilder):
     """Records each rendered placement's world matrix and each solid's
     shared local-space mesh, as ``add_volume()`` already computes both and
     discards them after baking vertices into the flat ``self.scene`` lists
-    the other exporters use."""
+    the other exporters use.
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
+    Declares GDMLSceneBuilder as its base purely so mypy can check this
+    mixin's own ``super().add_volume()`` call and ``self.scene``/
+    ``self.solid_mesh`` accesses against a real contract: the actual
+    runtime MRO is unaffected, since ApiGDMLSceneBuilder/
+    ApiPyg4ometrySceneBuilder already list a GDMLSceneBuilder subtype as
+    their other base, and C3 linearization collapses the duplicate."""
+
+    def __init__(
+        self,
+        gdml: Path,
+        quality: str,
+        include_containers: bool,
+        include_world: bool,
+        max_objects: int,
+        max_vertices: int,
+    ) -> None:
+        super().__init__(
+            gdml, quality, include_containers, include_world, max_objects, max_vertices
+        )
         self._matrices: dict[int, base.Mat4] = {}
         self._solids: dict[str, Mesh] = {}
 

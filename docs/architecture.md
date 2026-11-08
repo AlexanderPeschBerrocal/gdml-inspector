@@ -63,6 +63,18 @@ remain free to change. See `gdml_inspector.api`'s module docstring for the
 full units/identities/resource-budget/error-behaviour contract and
 `CHANGELOG.md` for its versioning policy.
 
+Static type checking (mypy, `uv run --no-sync mypy` after `uv sync --group
+typing`; see [testing.md](testing.md)) checks every mixin's own method
+bodies against a real contract rather than reporting every `self.scene`/
+`super().add_volume()` access as undefined: `DiffMixin`/`ApiMixin` declare
+`GDMLSceneBuilder` as their base purely for mypy's benefit (the runtime MRO
+is unchanged, since `DiffGDMLSceneBuilder(DiffMixin, GDMLSceneBuilder)`
+already lists a `GDMLSceneBuilder` subtype as the other base, and C3
+linearization collapses the duplicate), while `LazyBuilderMixin`, which
+never calls `super().add_volume()`/`super().to_dict()`, only needs its
+expected attributes declared, not a real base. `gltf.GltfMixin` needs
+neither, since its two hook methods only touch dicts it owns itself.
+
 HTML resources are loaded through `importlib.resources`, including when run from
 an installed wheel. No browser package manager or remote JavaScript CDN is used.
 The local server binds to `127.0.0.1`, serves the output directory without

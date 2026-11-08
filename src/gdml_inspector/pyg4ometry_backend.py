@@ -7,6 +7,7 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TextIO, cast
 
 from .geometry import GDMLSceneBuilder, Triangle, Vec3, add_tri
 
@@ -17,10 +18,12 @@ def maybe_call(obj: object, names: Sequence[str]) -> object | None:
             value = getattr(obj, name)
             if callable(value):
                 try:
-                    return value()
+                    # pyg4ometry's return type varies by release; narrowed to
+                    # object at this boundary rather than trusted as Any.
+                    return cast(object, value())
                 except TypeError:
                     continue
-            return value
+            return cast(object, value)
     return None
 
 
@@ -39,7 +42,7 @@ def _numeric_triplet(value: object, seen: set[int]) -> Vec3 | None:
 
     if hasattr(value, "eval"):
         try:
-            value = value.eval()  # type: ignore[assignment]
+            value = value.eval()
         except TypeError:
             pass
 
@@ -60,7 +63,7 @@ def _numeric_triplet(value: object, seen: set[int]) -> Vec3 | None:
 
     if hasattr(value, "tolist"):
         try:
-            value = value.tolist()  # type: ignore[assignment]
+            value = value.tolist()
         except TypeError:
             pass
 
@@ -72,7 +75,9 @@ def _numeric_triplet(value: object, seen: set[int]) -> Vec3 | None:
 
     if not isinstance(value, (str, bytes)):
         try:
-            seq = list(value)  # type: ignore[arg-type]
+            # pyg4ometry return values are untyped at this boundary; narrowed
+            # to object, so list() needs an explicit escape here.
+            seq = list(value)  # type: ignore[call-overload]
         except TypeError:
             seq = []
         if len(seq) >= 3:
@@ -84,7 +89,9 @@ def _numeric_triplet(value: object, seen: set[int]) -> Vec3 | None:
 
 
 def triangulate_vertex_face_mesh(vertices: object, faces: object) -> list[Triangle]:
-    verts_raw = list(vertices)  # type: ignore[arg-type]
+    # pyg4ometry's vertex/face containers are untyped at this boundary;
+    # narrowed to object, so list() needs an explicit escape here.
+    verts_raw = list(vertices)  # type: ignore[call-overload]
     verts: list[Vec3] = []
     for item in verts_raw:
         point = numeric_triplet(item)
@@ -95,7 +102,7 @@ def triangulate_vertex_face_mesh(vertices: object, faces: object) -> list[Triang
 
     tris: list[Triangle] = []
     if hasattr(faces, "tolist"):
-        faces = faces.tolist()  # type: ignore[assignment]
+        faces = faces.tolist()
     if isinstance(faces, tuple):
         faces = list(faces)
 
@@ -108,7 +115,8 @@ def triangulate_vertex_face_mesh(vertices: object, faces: object) -> list[Triang
             face_list.append(faces[i + 1 : i + 1 + n])
             i += n + 1
     else:
-        face_list = list(faces)  # type: ignore[arg-type]
+        # faces may still be an arbitrary untyped iterable here.
+        face_list = list(faces)  # type: ignore[call-overload]
 
     for face in face_list:
         if hasattr(face, "tolist"):
@@ -129,7 +137,7 @@ def triangulate_vertex_face_mesh(vertices: object, faces: object) -> list[Triang
 def parse_off_mesh(path: Path) -> list[Triangle]:
     """Parse a simple OFF mesh written by pyg4ometry/pycgal."""
 
-    def next_data_line(handle) -> str:
+    def next_data_line(handle: TextIO) -> str:
         while True:
             line = handle.readline()
             if not line:
@@ -246,9 +254,11 @@ def extract_triangles_from_pyg4ometry_mesh(mesh: object) -> list[Triangle]:
     polygons = maybe_call(mesh, ["polygons"])
     if polygons is None and isinstance(mesh, (list, tuple)):
         polygons = mesh
-    tris: list[Triangle] = []
+    polygon_tris: list[Triangle] = []
     if polygons is not None:
-        for polygon in list(polygons):  # type: ignore[arg-type]
+        # polygons/raw_vertices are untyped pyg4ometry containers at this
+        # boundary; narrowed to object, so list() needs an explicit escape.
+        for polygon in list(polygons):  # type: ignore[call-overload]
             raw_vertices = maybe_call(polygon, ["vertices", "verts", "points"])
             if raw_vertices is None and isinstance(polygon, (list, tuple)):
                 raw_vertices = polygon
@@ -256,13 +266,16 @@ def extract_triangles_from_pyg4ometry_mesh(mesh: object) -> list[Triangle]:
                 continue
             verts = [
                 p
-                for p in (numeric_triplet(v) for v in list(raw_vertices))
+                for p in (
+                    numeric_triplet(v)
+                    for v in list(raw_vertices)  # type: ignore[call-overload]
+                )
                 if p is not None
             ]
             for i in range(1, len(verts) - 1):
-                add_tri(tris, verts[0], verts[i], verts[i + 1])
-    if tris:
-        return tris
+                add_tri(polygon_tris, verts[0], verts[i], verts[i + 1])
+    if polygon_tris:
+        return polygon_tris
 
     return extract_triangles_via_off(mesh)
 
@@ -290,7 +303,7 @@ def describe_object(label: str, value: object, depth: int = 0) -> list[str]:
 
 def debug_pyg4ometry_mesh(gdml_path: Path, solid_name: str | None = None) -> int:
     try:
-        from pyg4ometry import gdml as pyg4_gdml  # type: ignore
+        from pyg4ometry import gdml as pyg4_gdml
     except ModuleNotFoundError:
         print(
             "pyg4ometry is not installed in this Python environment.", file=sys.stderr
@@ -336,8 +349,9 @@ def debug_pyg4ometry_mesh(gdml_path: Path, solid_name: str | None = None) -> int
         if isinstance(converted, tuple):
             print(f"toVerticesAndPolygons tuple length: {len(converted)}")
             for i, item in enumerate(converted[:2]):
+                item_len: int | str
                 try:
-                    item_len = len(item)  # type: ignore[arg-type]
+                    item_len = len(item)
                 except TypeError:
                     item_len = "unknown"
                 print(
@@ -361,7 +375,8 @@ def debug_pyg4ometry_mesh(gdml_path: Path, solid_name: str | None = None) -> int
     polygons = maybe_call(mesh, ["polygons"])
     if polygons is not None:
         try:
-            polygon_list = list(polygons)  # type: ignore[arg-type]
+            # polygons is an untyped pyg4ometry container narrowed to object.
+            polygon_list = list(polygons)  # type: ignore[call-overload]
         except TypeError:
             polygon_list = []
         print(f"polygons: {len(polygon_list)}")
@@ -373,7 +388,8 @@ def debug_pyg4ometry_mesh(gdml_path: Path, solid_name: str | None = None) -> int
             print(f"polygon[0] vertices attr: {short_repr(raw_vertices)}")
             if raw_vertices is not None:
                 try:
-                    verts = list(raw_vertices)  # type: ignore[arg-type]
+                    # Same as above: untyped pyg4ometry container.
+                    verts = list(raw_vertices)  # type: ignore[call-overload]
                 except TypeError:
                     verts = []
                 print(f"polygon[0] vertex count: {len(verts)}")
@@ -408,7 +424,7 @@ class Pyg4ometrySceneBuilder(GDMLSceneBuilder):
         self.backend_name = "pyg4ometry"
         super().parse()
         try:
-            from pyg4ometry import gdml as pyg4_gdml  # type: ignore
+            from pyg4ometry import gdml as pyg4_gdml
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "pyg4ometry is not installed. Install it in this environment or use --backend python."

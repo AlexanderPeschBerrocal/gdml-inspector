@@ -154,6 +154,27 @@ suite is not a claim that those gaps have been fixed.
   dependency policy — those are explicitly deferred to a separate change
   in ROOT Explorer's own repository, per the issue's own text.
 
+## Static type checking
+
+- mypy's scope is `src/gdml_inspector`, not `tests/`. It covers the core
+  scene model precisely (`geometry.py`'s `Scene.objects`/`to_dict()`,
+  typed via `ObjectDict`/`SceneDict`/`DiagnosticDict`) and `diff.py`'s own
+  consumption of that same shape, but not every dict this project produces:
+  `lazy.py`'s manifest/chunk-entry dict and `diff.py`'s own comparison-
+  report dict (`build_report()`'s return value) are a different, separate
+  shape from `scene.objects` and remain `dict`/`dict[str, object]` — a
+  deliberately deferred next slice of issue #16, not an oversight.
+- The three exporter mixins (`DiffMixin`, `ApiMixin`, `LazyBuilderMixin`)
+  rely on the final multiply-inherited class to supply `GDMLSceneBuilder`'s
+  members; see [architecture.md](architecture.md) for how each is typed
+  without a runtime behavior change. A fully structural fix (a `Protocol`-
+  based common base for all exporter mixins) would be more "correct" but is
+  real design work spanning every exporter module — out of scope here.
+- pyg4ometry ships no inline types or stubs; the one `[[tool.mypy.
+  overrides]]` entry for `pyg4ometry.*` is the only suppression in the
+  config, and installing the `typing` dependency group never installs
+  pyg4ometry itself.
+
 ## Rendering and size limits
 
 - Union meshes can contain interior surfaces. Subtraction/intersection can look
