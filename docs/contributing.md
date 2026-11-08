@@ -129,13 +129,15 @@ interpreter. Neither change should silently narrow public Python support.
 
 `pyproject.toml`'s `version` field is the one authoritative value;
 `gdml_inspector.__version__` is always derived from it via the installed
-distribution's metadata, not a second literal. To bump the version: edit
-`pyproject.toml`, then run `uv lock` and `uv sync --locked` so your editable
-install and the lockfile pick up the change. `tests/test_version.py` fails
-if you forget the second step, and the CI isolated-wheel check verifies the
-same equality from an installed wheel outside the checkout. See
-[CHANGELOG.md](../CHANGELOG.md)'s "Package version" section for the
-versioning policy (Semantic Versioning, pre-1.0).
+distribution's metadata, not a second literal. `tests/test_version.py`
+fails if your local install falls out of sync with it, and the CI
+isolated-wheel check verifies the same equality from an installed wheel
+outside the checkout. See [CHANGELOG.md](../CHANGELOG.md)'s "Package
+version" section for the versioning policy (Semantic Versioning, pre-1.0),
+and [releasing.md](releasing.md) for the actual release process —
+`scripts/release.py`/`scripts/check_release.py` own bumping the version,
+regenerating `uv.lock`, and preparing the release commit/tag; don't edit
+`pyproject.toml`'s version by hand outside of that process.
 
 ## Independent pip installations
 

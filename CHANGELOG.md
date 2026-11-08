@@ -41,14 +41,14 @@ deliberate `1.0.0`), not CalVer. `pyproject.toml`'s `version` field is the
 one authoritative value in the repo; `gdml_inspector.__version__` is
 always derived from the installed distribution's metadata
 (`importlib.metadata.version("gdml-inspector")`), never a second literal
-to keep in sync by hand. To bump the version: edit `pyproject.toml`, then
-run `uv lock` so the lockfile and your editable install pick it up —
-`tests/test_version.py`'s `test_declared_installed_and_runtime_versions_agree`
-exists specifically to catch forgetting that second step, and the CI
-isolated-wheel check verifies the same equality from an installed wheel
-outside the source checkout. Full release automation (tagging, dry runs,
-automated bumping) is issue #22's separate scope; this is only the
-authoritative-source policy that tooling will build on.
+to keep in sync by hand. `tests/test_version.py`'s
+`test_declared_installed_and_runtime_versions_agree` exists specifically
+to catch a stale editable install, and the CI isolated-wheel check
+verifies the same equality from an installed wheel outside the source
+checkout. The version is bumped exclusively via `scripts/release.py`
+(never by hand-editing `pyproject.toml`); see
+[docs/releasing.md](docs/releasing.md) for the full, reviewed release
+process (issue #22) this now builds on top of this policy.
 
 ## [0.3.0] - 2026-11-08
 
