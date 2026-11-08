@@ -47,3 +47,16 @@ def test_lazy_vertex_budget_rejects_an_object_that_would_exceed_it(single_volume
     assert builder.chunks == {}
     assert builder.stopped_at_limit
     assert any("limit" in warning for warning in builder.scene.warning_messages)
+
+
+def test_lazy_budget_exceeded_respects_the_stopped_at_limit_flag(example_gdml):
+    # add_volume() can reject a single oversized object outright (its own
+    # precise pre-commit check on total_vertices + this object's count),
+    # which leaves total_objects/total_vertices unchanged and only sets
+    # stopped_at_limit. A later budget check re-deriving purely from those
+    # counts would miss that rejection and wrongly let a further, smaller
+    # sibling be attempted; _budget_exceeded() must honour the flag too.
+    builder = lazy_builder(example_gdml, max_objects=100, max_vertices=100_000)
+    assert not builder._budget_exceeded()
+    builder.stopped_at_limit = True
+    assert builder._budget_exceeded()

@@ -220,117 +220,20 @@ class LazyBuilderMixin:
         self.total_vertices += vertex_count
         self.total_objects += 1
 
-    def place_physvols(
-        self,
-        physvols: list[base.ET.Element],
-        matrix: base.Mat4,
-        path: str,
-        depth: int = 0,
-        ancestors: frozenset[tuple[str, str]] = frozenset(),
-    ) -> None:
-        """Traverse the daughters placed by ``physvols`` in a mother at ``matrix``."""
-        for placement in physvols:
-            ref_el = base.child(placement, "volumeref")
-            if ref_el is None:
-                continue
-            ref = ref_el.attrib.get("ref", "")
-            placement_name = placement.attrib.get("name", ref)
-            child_matrix = base.matmul(
-                matrix,
-                base.placement_matrix(
-                    placement, self.positions, self.rotations, self.scales
-                ),
-            )
-            # Like Geant4, a reference names an assembly before a logical volume.
-            # An assembly's physvols are placed relative to its own placement.
-            assembly = self.assemblies.get(ref)
-            if assembly is not None:
-                key = ("assembly", ref)
-                if key in ancestors:
-                    raise ValueError(f"Cyclic GDML assembly reference: {ref}")
-                if depth + 1 >= base.MAX_NESTING_DEPTH:
-                    raise ValueError(
-                        "GDML volume nesting exceeds the supported depth of "
-                        f"{base.MAX_NESTING_DEPTH}"
-                    )
-                self.place_physvols(
-                    base.children(assembly, "physvol"),
-                    child_matrix,
-                    f"{path}/{placement_name}",
-                    depth + 1,
-                    ancestors | {key},
-                )
-            else:
-                child_volume = self.volumes.get(ref)
-                if child_volume is None:
-                    self.scene.diagnose(
-                        "missing-volume-reference",
-                        "error",
-                        "reference",
-                        "physvol",
-                        f"Missing volume reference: {ref}",
-                        identifier=ref,
-                    )
-                    continue
-                self.traverse(
-                    child_volume,
-                    child_matrix,
-                    f"{path}/{placement_name}",
-                    depth + 1,
-                    ancestors,
-                )
-            if self.stopped_at_limit:
-                return
-
-    def traverse(
-        self,
-        volume: base.VolumeDef,
-        matrix: base.Mat4,
-        path: str,
-        depth: int = 0,
-        ancestors: frozenset[tuple[str, str]] = frozenset(),
-    ) -> None:
-        if (
-            self.total_objects >= self.max_objects
+    def _budget_exceeded(self) -> bool:
+        # OR in stopped_at_limit: add_volume() can reject a single
+        # oversized object outright (its own precise pre-commit check)
+        # without incrementing total_objects/total_vertices at all, which a
+        # pure count-based check would miss, letting a later, smaller
+        # sibling be attempted when traversal should already have stopped.
+        return (
+            self.stopped_at_limit
+            or self.total_objects >= self.max_objects
             or self.total_vertices >= self.max_vertices
-        ):
-            self.stopped_at_limit = True
-            return
-        key = ("volume", volume.name)
-        if key in ancestors:
-            raise ValueError(f"Cyclic GDML volume reference: {volume.name}")
-        if depth >= base.MAX_NESTING_DEPTH:
-            raise ValueError(
-                f"GDML volume nesting exceeds the supported depth of {base.MAX_NESTING_DEPTH}"
-            )
-        ancestors = ancestors | {key}
-        placements = base.children(volume.element, "physvol")
-        unsupported = {
-            tag: base.children(volume.element, tag)
-            for tag in base.UNSUPPORTED_DAUGHTERS
-        }
-        for tag, elements in unsupported.items():
-            if elements:
-                self.scene.diagnose(
-                    "unsupported-daughter",
-                    "warning",
-                    "unsupported",
-                    tag,
-                    f"Unsupported GDML daughter construct {tag!r} in volume "
-                    f"{volume.name!r}; not expanded",
-                    identifier=volume.name,
-                )
-        is_container = (
-            bool(placements)
-            or volume.material.startswith("Galactic")
-            or any(unsupported[tag] for tag in base.CONTAINER_DAUGHTERS)
         )
-        should_render = (self.include_containers or not is_container) and (
-            self.include_world or volume.name != self.world
-        )
-        if should_render:
-            self.add_volume(volume, matrix, path)
-        self.place_physvols(placements, matrix, path, depth, ancestors)
+
+    def _record_budget_exceeded(self) -> None:
+        self.stopped_at_limit = True
 
     def build_chunks(self) -> None:
         self.parse()

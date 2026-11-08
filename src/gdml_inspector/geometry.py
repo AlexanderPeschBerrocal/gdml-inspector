@@ -881,6 +881,26 @@ class GDMLSceneBuilder:
             }
         )
 
+    def _budget_exceeded(self) -> bool:
+        """Whether the configured object/vertex budget has been reached.
+        Overridden by lazy export, whose vertices never touch self.scene."""
+        return (
+            len(self.scene.objects) >= self.max_objects
+            or len(self.scene.positions) // 3 >= self.max_vertices
+        )
+
+    def _record_budget_exceeded(self) -> None:
+        """Called the first time traversal stops early because the budget
+        was reached. Overridden by lazy export, which defers the actual
+        diagnostic to the end of a whole build."""
+        self.scene.diagnose(
+            "limit-reached",
+            "warning",
+            "budget",
+            "export",
+            "Stopped at configured object/vertex limit",
+        )
+
     def place_physvols(
         self,
         physvols: list[ET.Element],
@@ -933,17 +953,8 @@ class GDMLSceneBuilder:
                 self.traverse(
                     child_vol, child_matrix, f"{path}/{pv_name}", depth + 1, ancestors
                 )
-            if (
-                len(self.scene.objects) >= self.max_objects
-                or len(self.scene.positions) // 3 >= self.max_vertices
-            ):
-                self.scene.diagnose(
-                    "limit-reached",
-                    "warning",
-                    "budget",
-                    "export",
-                    "Stopped at configured object/vertex limit",
-                )
+            if self._budget_exceeded():
+                self._record_budget_exceeded()
                 return
 
     def traverse(
@@ -954,10 +965,8 @@ class GDMLSceneBuilder:
         depth: int = 0,
         ancestors: frozenset[tuple[str, str]] = frozenset(),
     ) -> None:
-        if (
-            len(self.scene.objects) >= self.max_objects
-            or len(self.scene.positions) // 3 >= self.max_vertices
-        ):
+        if self._budget_exceeded():
+            self._record_budget_exceeded()
             return
         key = ("volume", volume.name)
         if key in ancestors:
