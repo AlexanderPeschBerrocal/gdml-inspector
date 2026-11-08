@@ -397,6 +397,10 @@ def read_existing_manifest(output: Path) -> dict:
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
+        # This parser is reached both via the dedicated gdml-inspector-lazy
+        # entry point and via `gdml-inspector --lazy`; the dedicated name
+        # is used here since argparse can only show one.
+        prog="gdml-inspector-lazy",
         description="Build a lazy-loading, phi-cut-enabled HTML viewer for GDML geometry.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

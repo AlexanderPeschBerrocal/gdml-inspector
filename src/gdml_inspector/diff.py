@@ -17,6 +17,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TypedDict, cast
 
+from . import __version__
 from . import geometry as base
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder
 
@@ -389,6 +390,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="gdml-inspector --diff",
         description="Compare two GDML files and report added/removed/changed placements.",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
     )
     parser.add_argument("gdml_a", type=Path, metavar="A.gdml")
     parser.add_argument("gdml_b", type=Path, metavar="B.gdml")
