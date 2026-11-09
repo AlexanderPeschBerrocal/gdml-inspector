@@ -455,31 +455,33 @@ class Pyg4ometrySceneBuilder(GDMLSceneBuilder):
             backend="pyg4ometry",
         )
 
-    def solid_mesh(self, ref: str) -> tuple[list[Triangle], str]:
+    def solid_mesh(
+        self, ref: str, depth: int = 0, ancestors: frozenset[str] = frozenset()
+    ) -> tuple[list[Triangle], str]:
         key = f"pyg4ometry:{ref}"
         if key in self.mesh_cache:
             return self.mesh_cache[key]
         solid = getattr(self, "pyg4ometry_solids", {}).get(ref)
         if solid is None:
             self._diagnose_fallback(ref, f"pyg4ometry missing solid reference: {ref}")
-            return super().solid_mesh(ref)
+            return super().solid_mesh(ref, depth, ancestors)
         mesh_func = getattr(solid, "mesh", None)
         if not callable(mesh_func):
             self._diagnose_fallback(
                 ref, f"pyg4ometry solid has no mesh() method: {ref}"
             )
-            return super().solid_mesh(ref)
+            return super().solid_mesh(ref, depth, ancestors)
         try:
             mesh = mesh_func()
             tris = extract_triangles_from_pyg4ometry_mesh(mesh)
         except Exception as exc:
             self._diagnose_fallback(ref, f"pyg4ometry mesh failed for {ref}: {exc}")
-            return super().solid_mesh(ref)
+            return super().solid_mesh(ref, depth, ancestors)
         if not tris:
             self._diagnose_fallback(
                 ref, f"pyg4ometry returned no extractable triangles for {ref}"
             )
-            return super().solid_mesh(ref)
+            return super().solid_mesh(ref, depth, ancestors)
         kind = f"pyg4ometry/{type(solid).__name__}"
         self.mesh_cache[key] = (tris, kind)
         return self.mesh_cache[key]

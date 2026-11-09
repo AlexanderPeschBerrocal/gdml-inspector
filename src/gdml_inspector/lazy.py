@@ -164,7 +164,7 @@ class LazyBuilderMixin:
     quality: str
     world: str
     volumes: dict[str, base.VolumeDef]
-    solid_mesh: Callable[[str], tuple[list[base.Triangle], str]]
+    solid_mesh: Callable[..., tuple[list[base.Triangle], str]]
     parse: Callable[[], None]
     traverse: Callable[..., None]
 
