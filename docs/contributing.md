@@ -133,6 +133,27 @@ the lock with the new uv release. Update `.python-version`, the corresponding
 CI matrix entry, and these instructions together when changing the development
 interpreter. Neither change should silently narrow public Python support.
 
+`.github/dependabot.yml` opens weekly PRs for the same things described
+above, grouped to limit noise (one combined PR for routine `uv`-managed dev
+tooling, a separate `github-actions` group for the pinned actions in
+`.github/workflows/`) — it does not replace the coordinated-edit
+requirements already documented in this section. A proposed Ruff bump
+still needs the local pre-commit hook and CI's `lint` job to both pass
+before merging; a proposed `astral-sh/setup-uv` bump does not by itself
+update `tool.uv.required-version` or these installation instructions,
+which still need the coordinated manual edit described above. `pyg4ometry`
+is deliberately excluded from the bundled dev-tooling group so an update
+to the optional backend always arrives as its own separate, clearly
+labelled PR, not folded into a routine dev-tool diff. No auto-merge is
+configured, and nothing here can trigger `release.yml`/`publish-
+release.yml` — a Dependabot PR is an ordinary PR, running exactly
+`ci.yml`/`mypy.yml`/`pyg4ometry.yml` like any other. There is no `docker`
+or `pre-commit` ecosystem entry: this repo has no Dockerfile yet (issue
+#23) and its `.pre-commit-config.yaml` has only local hooks calling into
+the project's own locked Ruff, with no externally pinned hook repos to
+track; add the corresponding entry only once such a dependency actually
+exists.
+
 ## Updating the package version
 
 `pyproject.toml`'s `version` field is the one authoritative value;
