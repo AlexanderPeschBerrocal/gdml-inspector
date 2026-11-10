@@ -53,15 +53,36 @@ hooks are no-ops by default, so every existing consumer is unaffected; only
 
 `standalone.HierarchyMixin` is the second consumer of those same two hooks:
 it records one `HierarchyNodeDict` per path (parent path, logical-volume
-identity, render/assembly flags), including non-rendered container and
-assembly nodes, for the single-file viewer's hierarchy panel. It is kept
-independent of `ObjectDict`/`SceneDict` -- a node's own rendered mesh, if
-any, is cross-referenced by `path` against `scene.objects` only after
-`build()` finishes -- and embedded in the output HTML as a second, separate
-top-level JSON value (`const HIERARCHY`) alongside `const SCENE`, rather
-than as a new key on the existing scene dict, so that dict's shape stays
-unaffected. The panel itself (search, expand/collapse, hide/isolate/focus,
-keyboard navigation) lives entirely in `assets/standalone.html`; the lazy
+identity, render/assembly flags, each placement's own local transform from
+`_on_placement()`, and -- by also overriding `add_volume()`, the same way
+`DiffMixin`/`ApiMixin` already do -- the composed global transform for
+rendered nodes), including non-rendered container and assembly nodes, for
+the single-file viewer's hierarchy and picking-inspector panels. It also
+exposes `solids_table()`, each parsed solid's kind and own declared
+parameters keyed by GDML ref (`SolidInfo`, promoted from `diff.py` to
+`geometry.py` since it is just `tag_name()`/`solid_params()` combined --
+not diff-specific logic). It is kept independent of `ObjectDict`/
+`SceneDict` -- a node's own rendered mesh, if any, is cross-referenced by
+`path` against `scene.objects` only after `build()` finishes -- and
+embedded in the output HTML as separate, top-level JSON values
+(`const HIERARCHY`, `const SOLIDS`) alongside `const SCENE`, rather than as
+new keys on the existing scene dict, so that dict's shape stays unaffected.
+
+The standalone viewer's object picking (`assets/standalone.html`) uses a
+WebGL1 ID buffer rather than vertex sampling: every triangle's object id is
+encoded as a colour and drawn, once per click, into an offscreen
+framebuffer with depth testing enabled (the main pass runs with depth
+testing disabled, for its own unrelated translucency/draw-order reasons),
+then read back at the exact clicked pixel. This is pixel-exact and
+depth-correct, and reuses the existing per-vertex visibility buffer and
+phi-cut uniforms so hidden/filtered/clipped surfaces are unpickable and
+don't block picking of what's behind them, for free. A persistent
+`selectedObjectId` drives both a highlight tint (a new `a_highlight`
+vertex attribute on the main shader) and the "Picked Object" inspector
+panel, kept in sync with the hierarchy tree's own `selectedPath` in both
+directions. The panel itself (search, expand/collapse, hide/isolate/focus,
+keyboard navigation, picking, the inspector) lives entirely in
+`assets/standalone.html`; the lazy
 viewer does not yet have an equivalent, since the lazy manifest has no
 per-placement data to build one from (see
 [limitations.md](limitations.md)).
