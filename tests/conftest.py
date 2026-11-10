@@ -1,8 +1,25 @@
 """Original, small GDML fixtures; no external detector files or native tools."""
 
+import importlib.util
+import threading
 from pathlib import Path
 
 import pytest
+
+from gdml_inspector.server import create_server
+
+# The browser tests need the optional `browser` dependency group (see
+# docs/testing.md); without it they are skipped at collection time rather
+# than failing on a missing `page` fixture.
+collect_ignore_glob = (
+    [] if importlib.util.find_spec("playwright") else ["test_*browser*.py"]
+)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    setattr(item, f"rep_{call.when}", outcome.get_result())
 
 
 @pytest.fixture
@@ -111,3 +128,97 @@ def nested_box(write_gdml):
         )
 
     return write
+
+
+@pytest.fixture
+def served():
+    """``served(directory) -> base URL``: serves a directory over real
+    loopback HTTP (lazy chunks cannot be fetched over file://). Every
+    server the test started is shut down and closed on teardown."""
+    running = []
+
+    def serve(directory):
+        server = create_server(Path(directory), 0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        running.append((server, thread))
+        return f"http://127.0.0.1:{server.server_port}"
+
+    yield serve
+    for server, thread in running:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+class PageWatcher:
+    """Records every way a page can visibly fail: console errors, uncaught
+    exceptions, failed requests and HTTP error responses."""
+
+    def __init__(self, page):
+        self.page = page
+        self.problems = []
+        page.on("console", self._console)
+        page.on("pageerror", lambda exc: self._add(f"uncaught exception: {exc}"))
+        page.on(
+            "requestfailed",
+            lambda request: self._add(
+                f"request failed: {request.url} ({request.failure})"
+            ),
+        )
+        page.on("response", self._response)
+
+    def _add(self, problem):
+        self.problems.append(problem)
+
+    def _console(self, message):
+        if message.type == "error":
+            self._add(f"console error: {message.text}")
+
+    def _response(self, response):
+        if response.status >= 400 and not response.url.endswith("/favicon.ico"):
+            self._add(f"HTTP {response.status}: {response.url}")
+
+    def assert_clean(self):
+        assert not self.problems, "browser problems:\n" + "\n".join(self.problems)
+
+
+@pytest.fixture
+def watched_page(page, request, output_path):
+    """``page`` plus error collection; on failure the collected problems
+    are written to ``browser-log.txt`` beside Playwright's own artifacts so
+    CI uploads them with the screenshot and trace."""
+    watcher = PageWatcher(page)
+    yield watcher
+    report = getattr(request.node, "rep_call", None)
+    if report is not None and report.failed:
+        directory = Path(output_path)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "browser-log.txt").write_text(
+            "\n".join(watcher.problems) or "no browser problems recorded",
+            encoding="utf-8",
+        )
+
+
+@pytest.fixture(scope="session")
+def webgl_renderer(browser):
+    """Fails visibly, naming the reason, if headless Chromium cannot create
+    a WebGL context -- every viewer test would otherwise fail obscurely.
+    Returns the renderer string (software rendering shows up here)."""
+    context = browser.new_context()
+    page = context.new_page()
+    try:
+        renderer = page.evaluate(
+            """() => {
+              const gl = document.createElement('canvas').getContext('webgl');
+              return gl ? gl.getParameter(gl.RENDERER) : null;
+            }"""
+        )
+    finally:
+        context.close()
+    assert renderer, (
+        "WebGL is unavailable in this headless Chromium; the browser tests "
+        "need at least software rendering (see docs/testing.md)."
+    )
+    print(f"WebGL renderer: {renderer}")
+    return renderer

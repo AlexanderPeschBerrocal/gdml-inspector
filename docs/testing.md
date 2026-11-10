@@ -3,14 +3,17 @@
 The base suite exercises the bundled Python backend with original synthetic
 GDML inputs and standard Python numerical checks. It needs no ROOT, Geant4,
 pyg4ometry, detector downloads, or browser. Dependencies are in the local `test`
-group; none are runtime requirements of the viewer.
+group (plus `release`/`build` for the release-script and packaging tests); none
+are runtime requirements of the viewer. The browser tests are a separate
+`browser` group, described [below](#browser-smoke-tests-and-screenshots); without
+it they are skipped at collection time.
 [`reference-validation.md`](reference-validation.md) documents a separate,
 manual, one-time comparison of the placement conventions below against ROOT's
 GDML importer, using a script that is not part of this suite for the same
 reason.
 
 ```bash
-uv sync --locked --no-default-groups --group test
+uv sync --locked --no-default-groups --group test --group release --group build
 uv run --no-sync pytest
 uv run --no-sync pytest --cov=gdml_inspector --cov-report=term-missing --cov-report=xml --cov-report=html
 ```
@@ -20,6 +23,45 @@ The second test invocation also writes `coverage.xml` and
 same test group alongside the other development tools. To run just the
 numerical checks, use `uv run --no-sync pytest tests/test_units.py
 tests/test_transforms.py tests/test_meshes.py tests/test_invariants.py`.
+
+## Browser smoke tests and screenshots
+
+Python tests cannot see generated JavaScript fail, a shader fail to link, or a
+lazy chunk fail to fetch, so `tests/test_*browser*.py` drive both viewers in
+headless Chromium via Playwright, using only the bundled synthetic
+`examples/detector.gdml` and a loopback server each test owns and shuts down
+(no private files, no CDN assets). This is the exact command CI's `browser`
+job runs:
+
+```bash
+uv sync --locked --no-default-groups --group test --group browser
+uv run --no-sync playwright install chromium   # CI adds --with-deps
+uv run --no-sync pytest tests/test_*browser*.py \
+    --screenshot only-on-failure --tracing retain-on-failure --output test-results
+```
+
+- **What is covered:** both programs' shaders link with no GL error; the
+  camera presets, opacity, wireframe, axes, dark-mode, phi-cut, material and
+  hierarchy/picking/diagnostics controls (standalone); layer selection fetching
+  chunks over real HTTP, unloading, keeping hidden chunks loaded, a reload round
+  trip, and deselecting while a chunk is still loading, which must never leave
+  stale visible geometry (lazy).
+- **Waiting:** tests wait on observable state (a linked program, a loaded chunk,
+  a finished frame), not fixed sleeps.
+- **Failures are loud:** the `watched_page` fixture records console errors,
+  uncaught exceptions, failed requests and HTTP errors; the harness's own tests
+  inject a script error, an uncompilable shader and a deleted chunk to prove
+  they are detected. If headless Chromium cannot create a WebGL context at all,
+  the suite fails up front naming that cause. On a GPU-less machine Chromium
+  uses software rendering (SwiftShader); the renderer string is printed.
+- **Artifacts:** on a failure Playwright's screenshot and trace plus
+  `browser-log.txt` are written under `test-results/` and uploaded by CI. The
+  overview and phi-cutaway screenshots of both modes are always written to
+  `test-results/screenshots/` (override with `GDML_SCREENSHOT_DIR`) and
+  uploaded by CI as `viewer-screenshots`. They are for human review: the tests
+  assert only that they exist and that the cutaway differs from the overview,
+  never pixel equality. Nothing is committed or pushed; publishing screenshots
+  (for example into documentation) stays a reviewed, manual step.
 
 ## Static type checking
 

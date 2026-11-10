@@ -26,9 +26,12 @@ test = [
     "pytest-cov>=6,<8",
     "hypothesis>=6,<7",
     "tomli>=2; python_version < '3.11'",
-    # Real headless-browser verification for the embedded viewer JS, which
-    # no Python unit test can otherwise exercise. Needs a one-time
-    # `playwright install chromium` (see docs/contributing.md).
+]
+# Real headless-browser verification for the embedded viewer JS, which no
+# Python unit test can otherwise exercise. Kept apart from `test` so the
+# Python-version matrix never needs a browser; needs a one-time
+# `playwright install chromium` (see docs/testing.md).
+browser = [
     "playwright>=1.47,<2",
     "pytest-playwright>=0.5,<1",
 ]
@@ -48,6 +51,7 @@ hooks = [{ include-group = "lint" }, "pre-commit>=4,<5"]
 build = ["build>=1.2", "setuptools==84.2.1", "wheel==0.48.0"]
 dev = [
     { include-group = "test" },
+    { include-group = "browser" },
     { include-group = "lint" },
     { include-group = "typing" },
     { include-group = "release" },

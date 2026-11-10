@@ -35,10 +35,13 @@ uv run --no-sync python -m build --no-isolation
 
 The `playwright install` step is a one-time download of a Chromium binary
 (not a Python package; `uv sync` only installs the `playwright` package
-itself). It is required by `tests/test_standalone_browser.py`, which drives
-the standalone viewer's embedded JavaScript in a real headless browser --
-no Python unit test can otherwise exercise it. CI runs the equivalent
-`playwright install --with-deps chromium` before its own test step.
+itself, from the `browser` group that `uv sync --locked` includes via `dev`).
+It is required by the `tests/test_*browser*.py` files, which drive both viewers'
+embedded JavaScript in a real headless browser -- no Python unit test can
+otherwise exercise it. CI runs them in a dedicated `browser` job; see
+[testing.md](testing.md#browser-smoke-tests-and-screenshots) for the exact
+command, WebGL/software-rendering notes, and where screenshots and failure
+artifacts go.
 
 uv uses `.python-version` to select the development interpreter, downloading it
 if needed, and installs the project into `.venv` in editable mode. The committed
