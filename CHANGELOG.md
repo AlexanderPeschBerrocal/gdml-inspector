@@ -54,6 +54,14 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- A searchable physical-volume hierarchy panel in the standalone viewer
+  (`gdml-inspector`, not yet `--lazy`): the actual world-to-placement tree,
+  including non-rendered container/assembly nodes, with expand/collapse,
+  per-node hide/isolate, camera focus on a subtree's bounds, and keyboard
+  navigation. Hide/isolate cooperate with the existing material/solid-type/
+  search filters. A first, scoped slice of issue #2; lazy-mode support is
+  tracked separately, since the lazy manifest has no per-placement data to
+  build a tree from today (see `docs/limitations.md`).
 - `--version` on `--diff` and `--gltf` (previously only `standalone`/
   `--lazy` had it; `--diff`/`--gltf --version` used to fail with a
   confusing "required arguments" error instead of reporting a version).

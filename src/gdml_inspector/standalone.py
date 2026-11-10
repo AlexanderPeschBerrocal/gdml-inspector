@@ -10,8 +10,13 @@ import tempfile
 from collections.abc import Sequence
 from importlib.resources import files
 from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from typing_extensions import NotRequired
 
 from . import __version__
+from . import geometry as base
 from .geometry import (
     DIAGNOSTIC_CATEGORIES,
     DIAGNOSTIC_SEVERITIES,
@@ -20,12 +25,98 @@ from .geometry import (
     GDMLSceneBuilder,
     SceneDict,
     diagnostics_matching,
+    semantic_name,
 )
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder, debug_pyg4ometry_mesh
 from .server import serve_file
 
 
-def write_html(scene: SceneDict, output: Path) -> None:
+class HierarchyNodeDict(TypedDict):
+    """One node of the world-to-placement tree, independent of whether it
+    has a rendered mesh. Keyed by path like GltfMixin's node tree, with the
+    same pre-existing limitation: two anonymous physvols placing the same
+    volume under the same mother, with no explicit physvol name, collide
+    on path (see docs/limitations.md)."""
+
+    path: str
+    parentPath: str | None
+    name: str
+    semanticName: str
+    volume: str
+    semanticVolume: str
+    isAssembly: bool
+    rendered: bool
+    objectId: NotRequired[int]
+
+
+class HierarchyMixin:
+    """Records the full placement tree -- including non-rendered container
+    and assembly nodes that add_volume() never sees -- keyed by path, the
+    same way GltfMixin records flat per-path records for its own node
+    tree. Building the nested JSON array happens afterward in
+    hierarchy_nodes(), not here."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._hierarchy: dict[str, HierarchyNodeDict] = {}
+
+    def _hierarchy_node(self, path: str) -> HierarchyNodeDict:
+        existing = self._hierarchy.get(path)
+        if existing is not None:
+            return existing
+        name = path.rsplit("/", 1)[-1]
+        node: HierarchyNodeDict = {
+            "path": path,
+            "parentPath": None,
+            "name": name,
+            "semanticName": semantic_name(name),
+            "volume": name,
+            "semanticVolume": semantic_name(name),
+            "isAssembly": False,
+            "rendered": False,
+        }
+        self._hierarchy[path] = node
+        return node
+
+    def _on_placement(
+        self, path: str, parent_path: str, local_matrix: base.Mat4, is_assembly: bool
+    ) -> None:
+        super()._on_placement(path, parent_path, local_matrix, is_assembly)  # type: ignore[misc]
+        node = self._hierarchy_node(path)
+        node["parentPath"] = parent_path
+        node["isAssembly"] = is_assembly
+
+    def _on_volume(self, path: str, volume: base.VolumeDef, render: bool) -> None:
+        super()._on_volume(path, volume, render)  # type: ignore[misc]
+        node = self._hierarchy_node(path)
+        node["volume"] = volume.name
+        node["semanticVolume"] = semantic_name(volume.name)
+        node["rendered"] = render
+
+    def hierarchy_nodes(self, scene: SceneDict) -> list[HierarchyNodeDict]:
+        """The tree as a flat, pre-order list (dicts preserve insertion
+        order, and nodes are inserted exactly in traversal order), with
+        each rendered node's objectId resolved against the built scene."""
+        object_ids = {obj["path"]: obj["id"] for obj in scene["objects"]}
+        nodes = list(self._hierarchy.values())
+        for node in nodes:
+            object_id = object_ids.get(node["path"])
+            if object_id is not None:
+                node["objectId"] = object_id
+        return nodes
+
+
+class HierarchyGDMLSceneBuilder(HierarchyMixin, GDMLSceneBuilder):
+    pass
+
+
+class HierarchyPyg4ometrySceneBuilder(HierarchyMixin, Pyg4ometrySceneBuilder):
+    pass
+
+
+def write_html(
+    scene: SceneDict, hierarchy: list[HierarchyNodeDict], output: Path
+) -> None:
     title = html.escape(Path(scene["meta"]["source"]).name)
     output.write_text(
         files("gdml_inspector.assets")
@@ -34,6 +125,10 @@ def write_html(scene: SceneDict, output: Path) -> None:
         .replace("__TITLE__", title)
         .replace(
             "__SCENE__", json.dumps(scene, separators=(",", ":")).replace("</", "<\\/")
+        )
+        .replace(
+            "__HIERARCHY__",
+            json.dumps(hierarchy, separators=(",", ":")).replace("</", "<\\/"),
         ),
         encoding="utf-8",
     )
@@ -142,12 +237,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    builder_cls: type[GDMLSceneBuilder] = GDMLSceneBuilder
+    builder_cls: (
+        type[HierarchyGDMLSceneBuilder] | type[HierarchyPyg4ometrySceneBuilder]
+    ) = HierarchyGDMLSceneBuilder
     if args.backend in {"auto", "pyg4ometry"}:
         try:
             import pyg4ometry  # noqa: F401
 
-            builder_cls = Pyg4ometrySceneBuilder
+            builder_cls = HierarchyPyg4ometrySceneBuilder
             print("Using pyg4ometry backend for solid tessellation.")
         except ModuleNotFoundError:
             if args.backend == "pyg4ometry":
@@ -172,7 +269,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.validate_only:
         print(f"Validated {args.gdml}; not writing a viewer (--validate-only).")
     else:
-        write_html(scene, output)
+        write_html(scene, builder.hierarchy_nodes(scene), output)
         print(f"Wrote {output}")
     print(
         f"Objects: {meta['objects']:,}  Triangles: {meta['triangles']:,}  Vertices: {meta['vertices']:,}"

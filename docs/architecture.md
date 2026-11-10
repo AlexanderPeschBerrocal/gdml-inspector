@@ -9,7 +9,7 @@ directory is required.
 | --- | --- |
 | `geometry` | XML helpers, primitive meshes, volume definitions, scene metadata, traversal |
 | `pyg4ometry_backend` | Optional tessellation, mesh adapters, backend diagnostics |
-| `standalone` | Single-file scene export and its argument parser |
+| `standalone` | Single-file scene export, the physical-volume hierarchy tree, and its argument parser |
 | `lazy` | Layer classification, binary chunks, manifests, asset reuse and lazy CLI |
 | `diff` | Compares two built scenes and reports semantic placement differences |
 | `gltf` | Exports a hierarchical glTF 2.0 / GLB model for use outside this project |
@@ -50,6 +50,21 @@ placement's un-flattened local transform and needs an empty pivot node for
 a hidden container even though `add_volume()` is never called for it. The
 hooks are no-ops by default, so every existing consumer is unaffected; only
 `gltf.GltfMixin` overrides them.
+
+`standalone.HierarchyMixin` is the second consumer of those same two hooks:
+it records one `HierarchyNodeDict` per path (parent path, logical-volume
+identity, render/assembly flags), including non-rendered container and
+assembly nodes, for the single-file viewer's hierarchy panel. It is kept
+independent of `ObjectDict`/`SceneDict` -- a node's own rendered mesh, if
+any, is cross-referenced by `path` against `scene.objects` only after
+`build()` finishes -- and embedded in the output HTML as a second, separate
+top-level JSON value (`const HIERARCHY`) alongside `const SCENE`, rather
+than as a new key on the existing scene dict, so that dict's shape stays
+unaffected. The panel itself (search, expand/collapse, hide/isolate/focus,
+keyboard navigation) lives entirely in `assets/standalone.html`; the lazy
+viewer does not yet have an equivalent, since the lazy manifest has no
+per-placement data to build one from (see
+[limitations.md](limitations.md)).
 
 `api`'s builders specialise only `add_volume()`, like `diff`, since its
 public `Geometry` has no hierarchy concept: it records each rendered

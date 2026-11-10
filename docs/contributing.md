@@ -26,11 +26,19 @@ From the repository root:
 
 ```bash
 uv sync --locked
+uv run --no-sync playwright install chromium
 uv run --no-sync pytest
 uv run --no-sync python -m ruff check .
 uv run --no-sync python -m ruff format --check .
 uv run --no-sync python -m build --no-isolation
 ```
+
+The `playwright install` step is a one-time download of a Chromium binary
+(not a Python package; `uv sync` only installs the `playwright` package
+itself). It is required by `tests/test_standalone_browser.py`, which drives
+the standalone viewer's embedded JavaScript in a real headless browser --
+no Python unit test can otherwise exercise it. CI runs the equivalent
+`playwright install --with-deps chromium` before its own test step.
 
 uv uses `.python-version` to select the development interpreter, downloading it
 if needed, and installs the project into `.venv` in editable mode. The committed
