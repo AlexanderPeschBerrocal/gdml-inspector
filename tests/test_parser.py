@@ -170,6 +170,22 @@ def test_cyclic_assembly_reference_raises_an_actionable_error(write_gdml):
         scene_builder(path).build()
 
 
+def test_cyclic_boolean_solid_reference_raises_an_actionable_error(write_gdml):
+    path = write_gdml(
+        solids="""
+<box name="shape" x="2" y="4" z="6" lunit="mm"/>
+<subtraction name="a"><first ref="b"/><second ref="shape"/></subtraction>
+<subtraction name="b"><first ref="a"/><second ref="shape"/></subtraction>""",
+        structure="""
+<volume name="leaf"><materialref ref="G4_Si"/><solidref ref="a"/></volume>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol><volumeref ref="leaf"/></physvol>
+</volume>""",
+    )
+    with pytest.raises(ValueError, match="Cyclic GDML solid reference: a"):
+        scene_builder(path).build()
+
+
 def test_excessive_volume_nesting_raises_an_actionable_error(write_gdml):
     depth = 300
     layers = [

@@ -857,7 +857,9 @@ class GDMLSceneBuilder:
             else next(reversed(self.volumes))
         )
 
-    def solid_mesh(self, ref: str) -> tuple[list[Triangle], str]:
+    def solid_mesh(
+        self, ref: str, depth: int = 0, ancestors: frozenset[str] = frozenset()
+    ) -> tuple[list[Triangle], str]:
         if ref in self.mesh_cache:
             return self.mesh_cache[ref]
         el = self.solids.get(ref)
@@ -872,13 +874,20 @@ class GDMLSceneBuilder:
             )
             self.mesh_cache[ref] = ([], "missing")
             return self.mesh_cache[ref]
+        if ref in ancestors:
+            raise ValueError(f"Cyclic GDML solid reference: {ref}")
+        if depth >= MAX_NESTING_DEPTH:
+            raise ValueError(
+                f"GDML solid nesting exceeds the supported depth of {MAX_NESTING_DEPTH}"
+            )
         kind = tag_name(el)
         if kind in {"box", "tube", "cutTube", "cone"}:
             tris = mesh_solid_primitive(el, self.segments)
         elif kind in {"subtraction", "intersection", "union"}:
+            child_ancestors = ancestors | {ref}
             first = child(el, "first")
             first_ref = first.attrib.get("ref", "") if first is not None else ""
-            tris, subkind = self.solid_mesh(first_ref)
+            tris, subkind = self.solid_mesh(first_ref, depth + 1, child_ancestors)
             # Like the second operand, the first operand's optional transform
             # uses the rotation as given (G4GDMLReadSolids::BooleanRead).
             first_m = matmul(
@@ -888,9 +897,8 @@ class GDMLSceneBuilder:
             tris = transform_mesh(tris, first_m)
             if kind == "union":
                 second = child(el, "second")
-                tris2, _ = self.solid_mesh(
-                    second.attrib.get("ref", "") if second is not None else ""
-                )
+                second_ref = second.attrib.get("ref", "") if second is not None else ""
+                tris2, _ = self.solid_mesh(second_ref, depth + 1, child_ancestors)
                 m = matmul(
                     translate(*parse_vec(child(el, "position"), LEN_UNITS)),
                     euler_xyz(*parse_vec(child(el, "rotation"), ANGLE_UNITS)),

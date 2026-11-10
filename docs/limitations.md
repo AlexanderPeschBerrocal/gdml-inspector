@@ -42,7 +42,8 @@ suite is not a claim that those gaps have been fixed.
 - A duplicate solid/volume/assembly/`<define>` name is reported with a
   warning, but the later definition still wins; there is no multi-definition
   indexing like ROOT Explorer's segmented-detector lookup. A cyclic
-  volume/assembly reference, or nesting beyond 256 levels, raises an
+  volume/assembly reference, excessive nesting, or a cyclic Boolean solid
+  `first`/`second` operand reference, each bounded at 256 levels, raises an
   actionable error instead of exhausting the Python call stack.
 - The optional pyg4ometry backend can improve solid meshes while still using
   these local placement rules. A successful export is not a fidelity guarantee.
@@ -143,10 +144,11 @@ suite is not a claim that those gaps have been fixed.
 - `max_objects`/`max_vertices` truncate silently with a `"limit-reached"`
   diagnostic, like every other export mode; they do not raise.
   `Geometry.load()` otherwise raises the same `ValueError` cases
-  `parse()`/`traverse()`/`place_physvols()` already raise elsewhere (cyclic
-  references, excessive nesting, missing `<solids>`/`<structure>`), plus
-  the natural `FileNotFoundError`/`ParseError` for a bad path, and
-  `ModuleNotFoundError` for an explicitly-requested but missing pyg4ometry
+  `parse()`/`traverse()`/`place_physvols()`/`solid_mesh()` already raise
+  elsewhere (cyclic references, excessive nesting, missing
+  `<solids>`/`<structure>`), plus the natural `FileNotFoundError`/`ParseError`
+  for a bad path, and `ModuleNotFoundError` for an explicitly-requested but
+  missing pyg4ometry
   backend. There is no custom exception hierarchy.
 - This module is the repo-local half of issue #12 only. It does not
   include a ROOT Explorer adapter, shared fixtures proving parity between
