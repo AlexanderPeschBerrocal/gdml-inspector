@@ -246,9 +246,36 @@ uv run --no-sync --python 3.10 pytest
 uv sync --locked
 ```
 
-CI checks the lock, installs the locked development groups, runs tests and
-non-mutating lint/format checks, and builds distributions for each matrix
-interpreter. It then installs the
-wheel independently into a fresh environment outside the checkout, checks its
-dependency metadata, and exports both standalone and lazy viewers. That check
-also ensures development groups have not become runtime requirements.
+`ci.yml` ("Tests and distribution") splits this into three parallel jobs so
+a failure's cause is immediately visible in the checks list, and
+non-version-specific work isn't repeated across the matrix: `test` checks
+the lock and runs the full suite for each matrix interpreter; `lint` (a
+single run, not matrixed — formatting/lint don't vary by interpreter)
+installs only the `lint` group and runs the same non-mutating
+`ruff format --check`/`ruff check` commands documented above; `build` (also
+a single run, on the development pin) installs only the `build` group,
+builds the sdist/wheel, then installs the wheel independently into a fresh
+environment outside the checkout, checks its dependency metadata, and
+exports both standalone and lazy viewers — that check also ensures
+development groups have not become runtime requirements. All three use
+`uv sync --locked` (optionally `--no-default-groups --group <name>`), the
+same lock-based commands documented throughout this guide, each bounded by
+a `timeout-minutes` appropriate to what it does.
+
+### The full CI surface
+
+Five workflow files, each single-responsibility, none pushing commits or
+publishing artifacts except the two release workflows (and only those
+triggered by an explicit human action — a `workflow_dispatch` or a pushed
+tag, never an ordinary push/PR):
+
+| Workflow | Trigger | Responsibility |
+| --- | --- | --- |
+| `ci.yml` | every push/PR | base-package tests (matrixed), lint, packaging |
+| `mypy.yml` | every push/PR | static type checking (`src/gdml_inspector`, `scripts/`) |
+| `pyg4ometry.yml` | every push/PR | the optional pyg4ometry backend, installed only in this job |
+| `release.yml` | manual (`workflow_dispatch`) | prepares and pushes a release commit/tag |
+| `publish-release.yml` | a pushed `v*` tag | re-validates, builds, and creates the GitHub Release |
+
+See [testing.md](testing.md) for what each test-bearing job actually
+checks, and [releasing.md](releasing.md) for the two release workflows.
