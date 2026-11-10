@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dev-tooling:
+        patterns: ["*"]
+        # Kept out of the bundled group so an update to the optional
+        # backend always arrives as its own, separately reviewable PR.
+        exclude-patterns: ["pyg4ometry"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
