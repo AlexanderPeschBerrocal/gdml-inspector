@@ -42,6 +42,42 @@ report dict are a different, separate shape and remain `dict`/
 `dict[str, object]`, explicitly deferred rather than left as a silent gap
 (see [limitations](limitations.md)).
 
+## Optional pyg4ometry backend
+
+```bash
+uv sync --locked --extra pyg4ometry
+uv run --no-sync pytest tests/test_pyg4ometry_backend.py
+```
+
+A dedicated CI job (`.github/workflows/pyg4ometry.yml`) installs the extra
+and runs this file alone, separately from the base-package matrix in
+`ci.yml` — the extra is never installed merely to obtain this job's own
+coverage, and `tests/test_pyg4ometry_backend.py` itself starts with
+`pytest.importorskip("pyg4ometry")` so the base-package matrix (and
+ordinary local development without the extra) cleanly skips it rather
+than failing. Tested combination: CPython 3.12.16 (the committed
+`.python-version`) on `ubuntu-latest` (Linux x86_64); pyg4ometry also
+publishes macOS and Windows wheels, but only Linux is exercised in CI,
+matching every other workflow's runner.
+
+What it checks: backend identity (`meta["backend"] == "pyg4ometry"`) and
+analytic bounds for a plain box, so an unexpected silent fallback to the
+Python mesher would change the numbers or add a warning either way; a
+Boolean-solid (`<subtraction>`) fixture shared with `test_parser.py`'s own
+Python-backend approximation test, asserting pyg4ometry produces more
+triangle data and no approximation warning for the exact case where the
+Python backend is known to just return the first operand unchanged — the
+concrete, reproducible reason this backend exists; and that `--backend
+pyg4ometry` actually engages the backend through both the `standalone` and
+`--lazy` CLI entry points, not just the builder class directly. The
+absence-of-pyg4ometry CLI failure path (`--backend pyg4ometry` without the
+package installed) is already covered by the base-package suite
+(`tests/test_api.py`, the standalone/diff/gltf/lazy CLI exit-code-3 tests)
+without needing the package at all. `tests/test_diagnostics.py`'s own
+`_diagnose_fallback()` test is a different, narrower layer: it checks the
+diagnostic's shape via `Pyg4ometrySceneBuilder.__new__()`, with no real
+pyg4ometry involved.
+
 ## Independent expectations
 
 | Test module | Contract checked |
@@ -58,6 +94,8 @@ report dict are a different, separate shape and remain `dict`/
 | `test_gltf.py` | An independently decoded GLB container (header, JSON/BIN chunk framing and padding) and hand-written structural glTF checks; millimetre-to-metre unit conversion for vertices and node translations, mesh-index sharing across repeated placements, a hidden container's empty pivot node with correctly nested children, reflected-placement `doubleSided` materials, alpha-mode selection, `.gltf`+`.bin` external output, unsupported-solid diagnostics surviving into `--report`, `--gltf` CLI exit codes |
 | `test_api.py` | `gdml_inspector.api`: placement path/material/matrix identity, mesh-object sharing by solid ref, bounds, unsupported-solid and budget-limit diagnostics, `include_containers`/`include_world` parity with other export modes, `backend="pyg4ometry"` raising `ModuleNotFoundError` (not a wrapped `RuntimeError`) when missing, silent `backend="auto"` fallback, and that importing the module pulls in no optional dependency |
 | `test_cli.py`, `test_version.py`, `test_exports.py` | Error/absence paths, launcher version options, portable HTML, script escaping, `--strict`/`--fail-on`/`--report`/`--validate-only` |
+| `test_release.py` | `scripts/release.py`/`scripts/check_release.py` exercised against a disposable copy of this repo's own working tree: a clean release round trip, dirty-tree/wrong-branch/duplicate-tag rejections (each asserted to leave zero trace), and a tampered-committed-version detection |
+| `test_pyg4ometry_backend.py` | Skipped unless the optional pyg4ometry extra is installed (dedicated CI job only): backend identity, analytic bounds, real Boolean-solid tessellation vs. the Python backend's approximation, and `--backend pyg4ometry` through both CLI entry points |
 | `test_known_limitations.py` | Desired behaviour for tracked gaps, marked as strict expected failures |
 
 `conftest.py` generates small self-contained files in pytest's temporary

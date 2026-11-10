@@ -89,12 +89,20 @@ For the optional backend:
 ```bash
 uv sync --locked --extra pyg4ometry
 uv run --no-sync gdml-inspector examples/detector.gdml --backend pyg4ometry
+uv run --no-sync pytest tests/test_pyg4ometry_backend.py
 ```
 
-That extra may need native dependencies and is subject to pyg4ometry's own
-interpreter/platform support. A universal resolution is not a guarantee of a
-prebuilt wheel on every platform. Dedicated backend CI is tracked separately
-in [#24](https://github.com/AlexanderPeschBerrocal/gdml-inspector/issues/24).
+pyg4ometry publishes prebuilt wheels for CPython 3.9-3.14 on Linux
+(`manylinux2014_x86_64`), macOS (arm64/x86_64), and Windows; installing the
+published wheel on one of those platforms needs no system/native packages
+(CGAL, VTK, OCCT headers) at all — those are only required to build
+pyg4ometry itself from source, not to install it from PyPI. A universal
+lock resolution is still not a guarantee of a prebuilt wheel on every
+platform (notably no linux-aarch64 wheel exists today). The dedicated
+`pyg4ometry` CI job (`.github/workflows/pyg4ometry.yml`, issue #24) tests
+the extra on `ubuntu-latest` only, separately from the base-package matrix
+so the extra is never installed merely to obtain that job's own coverage;
+see [testing.md](testing.md) for what it checks.
 
 ## Updating dependencies and build tools
 
