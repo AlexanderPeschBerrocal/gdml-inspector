@@ -54,6 +54,21 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Depth-correct object picking and a detailed placement inspector in the
+  standalone viewer (`gdml-inspector`, not yet `--lazy`): clicking now
+  renders an offscreen, depth-tested WebGL ID buffer and reads back the
+  exact pixel instead of sampling nearby vertices, so occluded, hidden,
+  filtered, and phi-clipped surfaces are never selected and a click in the
+  middle of a large face always works. The picked object is highlighted in
+  the viewport and kept in sync with the hierarchy panel in both
+  directions. The inspector now shows physical and semantic paths, the
+  logical volume, material, the solid's own declared parameters (labelled
+  separately from its tessellated bounding box), local and global
+  transforms, an approximated-geometry note, and copy-path/copy-name/
+  focus/isolate actions. Selection clears automatically if the selected
+  object becomes hidden by a filter. A first, scoped slice of issue #4;
+  lazy-mode picking is tracked separately, for the same reason lazy-mode
+  hierarchy support is (see `docs/limitations.md`).
 - A searchable physical-volume hierarchy panel in the standalone viewer
   (`gdml-inspector`, not yet `--lazy`): the actual world-to-placement tree,
   including non-rendered container/assembly nodes, with expand/collapse,

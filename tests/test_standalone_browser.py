@@ -13,10 +13,14 @@ from .helpers import DEFAULT_OPTIONS
 @pytest.fixture
 def viewer_path(tmp_path, write_gdml):
     """A world with: two sibling placements of the same logical volume
-    (repeated-placement branches), and a container volume with its own
-    rendered child (expand/collapse, container labelling)."""
+    (repeated-placement branches), a container volume with its own
+    rendered child (expand/collapse, container labelling), and a front/back
+    pair of identically-sized, axis-aligned boxes directly behind one
+    another along +Z (for depth-correct-picking/occlusion tests)."""
     path = write_gdml(
-        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        solids="""
+<box name="shape" x="2" y="4" z="6" lunit="mm"/>
+<box name="overlap_shape" x="20" y="20" z="6" lunit="mm"/>""",
         structure="""
 <volume name="pixel"><materialref ref="G4_Si"/><solidref ref="shape"/></volume>
 <volume name="child"><materialref ref="G4_Si"/><solidref ref="shape"/></volume>
@@ -26,6 +30,8 @@ def viewer_path(tmp_path, write_gdml):
   </physvol>
 </volume>
 <volume name="empty_container"><materialref ref="Galactic"/><solidref ref="world_box"/></volume>
+<volume name="front_box"><materialref ref="G4_Si"/><solidref ref="overlap_shape"/></volume>
+<volume name="back_box"><materialref ref="G4_Si"/><solidref ref="overlap_shape"/></volume>
 <volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
   <physvol name="pixel_a"><volumeref ref="pixel"/>
     <position x="-50" y="0" z="0" unit="mm"/>
@@ -35,13 +41,20 @@ def viewer_path(tmp_path, write_gdml):
   </physvol>
   <physvol name="group"><volumeref ref="container"/></physvol>
   <physvol name="empty"><volumeref ref="empty_container"/></physvol>
+  <physvol name="front"><volumeref ref="front_box"/>
+    <position x="0" y="0" z="100" unit="mm"/>
+  </physvol>
+  <physvol name="back"><volumeref ref="back_box"/>
+    <position x="0" y="0" z="-100" unit="mm"/>
+  </physvol>
 </volume>""",
     )
     builder = HierarchyGDMLSceneBuilder(path, **DEFAULT_OPTIONS)
     scene = builder.build()
     nodes = builder.hierarchy_nodes(scene)
+    solids = builder.solids_table()
     output = tmp_path / "viewer.html"
-    write_html(scene, nodes, output)
+    write_html(scene, nodes, solids, output)
     return output
 
 
@@ -81,6 +94,8 @@ def test_world_starts_expanded_showing_its_direct_children(opened):
         "world/pixel_b",
         "world/group",
         "world/empty",
+        "world/front",
+        "world/back",
     }
 
 
@@ -115,6 +130,31 @@ def test_expand_collapse_materialises_and_removes_child_rows(opened):
 
 def row_path_present(page, path):
     return page.query_selector(f'[data-path="{path}"]') is not None
+
+
+_PROJECT_JS = """([wx, wy, wz]) => {
+  const cx = viewCenter[0] + panX, cy = viewCenter[1] + panY, cz = viewCenter[2];
+  const eye = [cx + dist*Math.cos(pitch)*Math.sin(yaw), cy + dist*Math.sin(pitch), cz + dist*Math.cos(pitch)*Math.cos(yaw)];
+  const mvp = mat4mul(perspective(45*Math.PI/180, canvas.width/canvas.height, radius/500, radius*20), lookAt(eye, [cx,cy,cz], cameraUp));
+  const tx=mvp[0]*wx+mvp[4]*wy+mvp[8]*wz+mvp[12], ty=mvp[1]*wx+mvp[5]*wy+mvp[9]*wz+mvp[13], tw=mvp[3]*wx+mvp[7]*wy+mvp[11]*wz+mvp[15];
+  const rect = canvas.getBoundingClientRect();
+  return [(tx/tw*0.5+0.5)*rect.width + rect.left, (-ty/tw*0.5+0.5)*rect.height + rect.top];
+}"""
+
+
+def click_world_point(page, world_point):
+    """Project a world-space point to page coordinates using the viewer's
+    own camera/projection functions (not a reimplementation of them), and
+    fire a real mouse click there -- exercising the actual DOM event path,
+    not a shortcut that calls pickAt()/selectObject() directly."""
+    sx, sy = page.evaluate(_PROJECT_JS, world_point)
+    page.mouse.click(sx, sy)
+
+
+def click_object_center(page, path):
+    bbox = page.evaluate(f"SCENE.objects.find(o => o.path === '{path}').bbox")
+    center = [(bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2, (bbox[2] + bbox[5]) / 2]
+    click_world_point(page, center)
 
 
 def test_hide_checkbox_updates_object_visibility(opened):
@@ -203,3 +243,139 @@ def test_picking_an_object_reveals_it_in_the_hierarchy(opened):
     page.wait_for_timeout(50)
     row = page.query_selector('[data-path="world/group/inner"]')
     assert "tree-selected" in row.get_attribute("class")
+
+
+def test_clicking_a_box_selects_it_and_populates_the_inspector(opened):
+    page, errors = opened
+    page.click("#viewXYPos")
+    page.wait_for_timeout(50)
+    click_object_center(page, "world/pixel_a")
+    page.wait_for_timeout(100)
+    assert page.evaluate("selectedPath") == "world/pixel_a"
+    pixel_a_id = page.evaluate("SCENE.objects.find(o => o.path === 'world/pixel_a').id")
+    assert page.evaluate("selectedObjectId") == pixel_a_id
+    assert page.eval_on_selector("#detailsContent", "el => el.style.display") == ""
+    assert page.inner_text("#detailPath") == "world/pixel_a"
+    assert page.inner_text("#detailSolidType") == "box"
+    assert "x:" in page.inner_text("#detailParams")
+    # The highlight buffer should mark exactly this object's vertices.
+    highlighted_ids = page.evaluate(
+        "Array.from(new Set(Array.from(ids).filter((id, i) => highlight[i] > 0)))"
+    )
+    assert highlighted_ids == [pixel_a_id]
+    assert errors == []
+
+
+def test_picking_is_depth_correct_through_occluding_geometry(opened):
+    # "front" (z=+100) and "back" (z=-100) share the same x/y footprint;
+    # viewed down -Z, a click at their shared screen position must resolve
+    # to the nearer one regardless of draw order -- the exact case
+    # vertex-sampling picking could get wrong.
+    page, errors = opened
+    page.click("#viewXYPos")
+    page.wait_for_timeout(50)
+    click_world_point(page, [0, 0, 100])
+    page.wait_for_timeout(100)
+    assert page.evaluate("selectedPath") == "world/front"
+    assert errors == []
+
+
+def test_hidden_object_is_not_pickable_and_does_not_block_what_is_behind_it(opened):
+    page, errors = opened
+    page.click("#viewXYPos")
+    page.wait_for_timeout(50)
+    page.query_selector('[data-path="world/front"] input[type=checkbox]').click()
+    page.wait_for_timeout(50)
+    click_world_point(page, [0, 0, 100])
+    page.wait_for_timeout(100)
+    # The front box is hidden, so the click passes through to the back one.
+    assert page.evaluate("selectedPath") == "world/back"
+    assert errors == []
+
+
+def test_clicking_empty_space_clears_the_selection(opened):
+    page, _errors = opened
+    page.click("#viewXYPos")
+    page.wait_for_timeout(50)
+    click_object_center(page, "world/pixel_a")
+    page.wait_for_timeout(100)
+    assert page.evaluate("selectedObjectId") is not None
+    rect = page.evaluate(
+        "(() => { const r = canvas.getBoundingClientRect(); return [r.left, r.top]; })()"
+    )
+    page.mouse.click(
+        rect[0] + 5, rect[1] + 5
+    )  # a canvas corner, away from all geometry
+    page.wait_for_timeout(100)
+    assert page.evaluate("selectedObjectId") is None
+    assert page.eval_on_selector("#detailsContent", "el => el.style.display") == "none"
+
+
+def test_selecting_a_container_tree_node_shows_a_reduced_inspector(opened):
+    page, _errors = opened
+    row = page.query_selector('[data-path="world/group"]')
+    row.click()
+    page.wait_for_timeout(50)
+    assert page.evaluate("selectedObjectId") is None
+    assert "container" in page.inner_text("#detailMaterial")
+    assert page.inner_text("#detailSolidType") == "--"
+
+
+def test_deselecting_when_the_selected_object_is_filtered_out(opened):
+    page, _errors = opened
+    page.click("#viewXYPos")
+    page.wait_for_timeout(50)
+    click_object_center(page, "world/pixel_a")
+    page.wait_for_timeout(100)
+    assert page.evaluate("selectedObjectId") is not None
+    material = page.evaluate(
+        "SCENE.objects.find(o => o.path === 'world/pixel_a').material"
+    )
+    page.eval_on_selector(f'input[data-material="{material}"]', "el => el.click()")
+    page.wait_for_timeout(100)
+    assert page.evaluate("selectedObjectId") is None
+    assert page.eval_on_selector("#detailsContent", "el => el.style.display") == "none"
+
+
+def test_copy_buttons_do_not_throw(opened):
+    page, errors = opened
+    page.click("#viewXYPos")
+    page.wait_for_timeout(50)
+    click_object_center(page, "world/pixel_a")
+    page.wait_for_timeout(100)
+    page.click("#detailCopyPath")
+    page.click("#detailCopyName")
+    page.wait_for_timeout(50)
+    assert errors == []
+
+
+def test_picking_is_correct_after_resize(opened):
+    page, _errors = opened
+    page.click("#viewXYPos")
+    page.wait_for_timeout(50)
+    page.set_viewport_size({"width": 700, "height": 500})
+    page.wait_for_timeout(100)
+    click_world_point(page, [0, 0, 100])
+    page.wait_for_timeout(100)
+    assert page.evaluate("selectedPath") == "world/front"
+
+
+def test_picking_is_correct_at_high_device_pixel_ratio(viewer_path, browser):
+    context = browser.new_context(
+        viewport={"width": 900, "height": 700}, device_scale_factor=2
+    )
+    page = context.new_page()
+    errors = []
+    page.on(
+        "console", lambda msg: errors.append(msg.text) if msg.type == "error" else None
+    )
+    page.goto(viewer_path.resolve().as_uri())
+    page.wait_for_selector("#hierarchyTree .tree-row")
+    page.click("#viewXYPos")
+    page.wait_for_timeout(50)
+    click_world_point(page, [0, 0, 100])
+    page.wait_for_timeout(100)
+    assert page.evaluate("window.devicePixelRatio") == 2
+    assert page.evaluate("selectedPath") == "world/front"
+    assert errors == []
+    context.close()

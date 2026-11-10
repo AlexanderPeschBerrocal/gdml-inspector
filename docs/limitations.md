@@ -149,6 +149,26 @@ suite is not a claim that those gaps have been fixed.
   free-text filters; there is no clipping filter yet for it to cooperate
   with (see the roadmap for `#5`).
 
+## Object picking and the placement inspector (standalone viewer)
+
+- Available in the standalone viewer only, same reasoning as the hierarchy
+  panel above: the lazy viewer's binary chunk format has no stable
+  per-object IDs today, so lazy-mode picking needs a chunk-format
+  extension and is tracked separately under issue #4.
+- "Both modes identify the same placement for an equivalent visible view"
+  and "selection survives a chunk reload" (issue #4's lazy-specific
+  acceptance criteria) are not addressed by this slice.
+- Highlighting is a colour tint on the selected object's own surface, not
+  a drawn outline -- WebGL1 has no single inexpensive pass for true
+  silhouette outlining without a stencil buffer or extra geometry, and a
+  tint is sufficient to show what is selected.
+- A solid's declared parameters come from its own numeric GDML attributes
+  (`solid_params()`); a Boolean solid (`union`/`subtraction`/
+  `intersection`) has none of its own and shows an explicit "no
+  parameters" note in the inspector rather than inventing dimensions for
+  it, consistent with how Boolean solids are already approximated
+  elsewhere (see "Geometry export" above and the parser section).
+
 ## Public API (`gdml_inspector.api`)
 
 - All lengths are millimetres, this project's native/unconverted GDML

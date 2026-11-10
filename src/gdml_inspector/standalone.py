@@ -24,8 +24,11 @@ from .geometry import (
     STRICT_EXIT_CODE,
     GDMLSceneBuilder,
     SceneDict,
+    SolidInfo,
     diagnostics_matching,
     semantic_name,
+    solid_params,
+    tag_name,
 )
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder, debug_pyg4ometry_mesh
 from .server import serve_file
@@ -47,17 +50,40 @@ class HierarchyNodeDict(TypedDict):
     isAssembly: bool
     rendered: bool
     objectId: NotRequired[int]
+    localMatrix: NotRequired[list[float]]
+    globalMatrix: NotRequired[list[float]]
 
 
-class HierarchyMixin:
+def _flatten_matrix(matrix: base.Mat4) -> list[float]:
+    """The same 3x4 row-major flattening diff.py's own ObjectDict["matrix"]
+    already uses, dropping the always-implicit [0, 0, 0, 1] fourth row."""
+    return [v for row in matrix[:3] for v in row]
+
+
+class HierarchyMixin(base.GDMLSceneBuilder):
     """Records the full placement tree -- including non-rendered container
     and assembly nodes that add_volume() never sees -- keyed by path, the
     same way GltfMixin records flat per-path records for its own node
     tree. Building the nested JSON array happens afterward in
-    hierarchy_nodes(), not here."""
+    hierarchy_nodes(), not here.
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
+    Declares GDMLSceneBuilder as its base purely so mypy can check this
+    mixin's own super().add_volume() call and self.solids access against a
+    real contract, matching diff.py's DiffMixin precedent; the actual
+    runtime MRO is unaffected (C3 linearization collapses the duplicate)."""
+
+    def __init__(
+        self,
+        gdml: Path,
+        quality: str,
+        include_containers: bool,
+        include_world: bool,
+        max_objects: int,
+        max_vertices: int,
+    ) -> None:
+        super().__init__(
+            gdml, quality, include_containers, include_world, max_objects, max_vertices
+        )
         self._hierarchy: dict[str, HierarchyNodeDict] = {}
 
     def _hierarchy_node(self, path: str) -> HierarchyNodeDict:
@@ -81,17 +107,24 @@ class HierarchyMixin:
     def _on_placement(
         self, path: str, parent_path: str, local_matrix: base.Mat4, is_assembly: bool
     ) -> None:
-        super()._on_placement(path, parent_path, local_matrix, is_assembly)  # type: ignore[misc]
+        super()._on_placement(path, parent_path, local_matrix, is_assembly)
         node = self._hierarchy_node(path)
         node["parentPath"] = parent_path
         node["isAssembly"] = is_assembly
+        node["localMatrix"] = _flatten_matrix(local_matrix)
 
     def _on_volume(self, path: str, volume: base.VolumeDef, render: bool) -> None:
-        super()._on_volume(path, volume, render)  # type: ignore[misc]
+        super()._on_volume(path, volume, render)
         node = self._hierarchy_node(path)
         node["volume"] = volume.name
         node["semanticVolume"] = semantic_name(volume.name)
         node["rendered"] = render
+
+    def add_volume(self, volume: base.VolumeDef, matrix: base.Mat4, path: str) -> None:
+        count_before = len(self.scene.objects)
+        super().add_volume(volume, matrix, path)
+        if len(self.scene.objects) > count_before:
+            self._hierarchy_node(path)["globalMatrix"] = _flatten_matrix(matrix)
 
     def hierarchy_nodes(self, scene: SceneDict) -> list[HierarchyNodeDict]:
         """The tree as a flat, pre-order list (dicts preserve insertion
@@ -105,6 +138,15 @@ class HierarchyMixin:
                 node["objectId"] = object_id
         return nodes
 
+    def solids_table(self) -> dict[str, SolidInfo]:
+        """Each parsed solid's kind and own declared parameters, keyed by
+        GDML ref and shared across every placement that references it --
+        the same construction diff.py's DiffMixin.to_dict() already does."""
+        return {
+            ref: {"type": tag_name(el), "params": solid_params(el)}
+            for ref, el in self.solids.items()
+        }
+
 
 class HierarchyGDMLSceneBuilder(HierarchyMixin, GDMLSceneBuilder):
     pass
@@ -115,7 +157,10 @@ class HierarchyPyg4ometrySceneBuilder(HierarchyMixin, Pyg4ometrySceneBuilder):
 
 
 def write_html(
-    scene: SceneDict, hierarchy: list[HierarchyNodeDict], output: Path
+    scene: SceneDict,
+    hierarchy: list[HierarchyNodeDict],
+    solids: dict[str, SolidInfo],
+    output: Path,
 ) -> None:
     title = html.escape(Path(scene["meta"]["source"]).name)
     output.write_text(
@@ -129,6 +174,10 @@ def write_html(
         .replace(
             "__HIERARCHY__",
             json.dumps(hierarchy, separators=(",", ":")).replace("</", "<\\/"),
+        )
+        .replace(
+            "__SOLIDS__",
+            json.dumps(solids, separators=(",", ":")).replace("</", "<\\/"),
         ),
         encoding="utf-8",
     )
@@ -269,7 +318,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.validate_only:
         print(f"Validated {args.gdml}; not writing a viewer (--validate-only).")
     else:
-        write_html(scene, builder.hierarchy_nodes(scene), output)
+        write_html(
+            scene, builder.hierarchy_nodes(scene), builder.solids_table(), output
+        )
         print(f"Wrote {output}")
     print(
         f"Objects: {meta['objects']:,}  Triangles: {meta['triangles']:,}  Vertices: {meta['vertices']:,}"

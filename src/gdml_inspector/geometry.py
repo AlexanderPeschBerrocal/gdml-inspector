@@ -497,6 +497,16 @@ def solid_params(el: ET.Element) -> dict[str, float]:
     return params
 
 
+class SolidInfo(TypedDict):
+    """A solid's kind and own declared parameters, shared by every
+    placement that references it -- built once per solid ref, not per
+    placement. Used by diff.py's per-solid comparison table and by
+    standalone.py's placement inspector."""
+
+    type: str
+    params: dict[str, float]
+
+
 def source_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 

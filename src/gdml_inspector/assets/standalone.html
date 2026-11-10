@@ -31,7 +31,11 @@ input[type=checkbox] { width: auto; }
 .row > * { flex: 1; }
 .pill { display: inline-block; padding: 2px 7px; border-radius: 99px; background: var(--pill); margin: 2px; font-size: 12px; }
 .warn { background: var(--warn-bg); border: 1px solid var(--warn-border); padding: 8px; border-radius: 6px; font-size: 12px; max-height: 120px; overflow: auto; }
-#details { font-size: 12px; white-space: pre-wrap; background: var(--soft); padding: 8px; border-radius: 6px; max-height: 180px; overflow: auto; }
+#details { font-size: 12px; background: var(--soft); padding: 8px; border-radius: 6px; max-height: 320px; overflow: auto; }
+.inspector-field { display: grid; grid-template-columns: 110px 1fr; gap: 6px; margin: 2px 0; word-break: break-word; }
+.inspector-field span { color: var(--muted); }
+.inspector-section { margin: 10px 0 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: pre-wrap; }
 #hud { position: absolute; left: 12px; bottom: 12px; background: var(--hud); padding: 8px 10px; border-radius: 6px; font-size: 12px; border: 1px solid var(--border); }
 .axis-label { position: absolute; display: none; pointer-events: none; font-size: 13px; font-weight: 800; transform: translate(-50%, -50%); text-shadow: 0 0 3px var(--panel), 0 0 3px var(--panel); }
 .material-list { display: grid; gap: 4px; max-height: 230px; overflow: auto; padding-right: 4px; }
@@ -101,7 +105,33 @@ input[type=checkbox] { width: auto; }
   <div class="small-actions"><button id="allMaterials">All</button><button id="noMaterials">None</button></div>
   <div id="materials"></div>
   <h2>Picked Object</h2>
-  <div id="details">Click a point in the detector view.</div>
+  <div id="details">
+    <div id="detailsEmpty">Click a point in the detector view.</div>
+    <div id="detailsContent" style="display:none">
+      <div class="inspector-field"><span>Path</span><b id="detailPath"></b></div>
+      <div class="inspector-field"><span>Semantic path</span><b id="detailSemanticPath"></b></div>
+      <div class="inspector-field"><span>Volume</span><b id="detailVolume"></b></div>
+      <div class="inspector-field"><span>Material</span><b id="detailMaterial"></b></div>
+      <div class="inspector-field"><span>Solid type</span><b id="detailSolidType"></b></div>
+      <div id="detailApproximated" class="warn" style="display:none">This solid's geometry is approximated -- see Accuracy Notes below.</div>
+      <div class="inspector-section">Declared parameters (mm / rad)</div>
+      <div id="detailParams" class="mono"></div>
+      <div class="inspector-section">Tessellated bounds (mm)</div>
+      <div id="detailBounds" class="mono"></div>
+      <div class="inspector-section">Local transform (mm)</div>
+      <div id="detailLocalMatrix" class="mono"></div>
+      <div class="inspector-section">Global transform (mm)</div>
+      <div id="detailGlobalMatrix" class="mono"></div>
+      <div class="small-actions">
+        <button id="detailCopyPath" type="button">Copy path</button>
+        <button id="detailCopyName" type="button">Copy name</button>
+      </div>
+      <div class="small-actions">
+        <button id="detailFocus" type="button">Focus</button>
+        <button id="detailIsolate" type="button">Isolate</button>
+      </div>
+    </div>
+  </div>
   <h2>Accuracy Notes</h2>
   <div class="warn" id="warnings"></div>
 </aside>
@@ -116,6 +146,7 @@ input[type=checkbox] { width: auto; }
 <script>
 const SCENE = __SCENE__;
 const HIERARCHY = __HIERARCHY__;
+const SOLIDS = __SOLIDS__;
 const canvas = document.getElementById('gl');
 const gl = canvas.getContext('webgl', {antialias: true, alpha: false});
 if (!gl) alert('WebGL is not available in this browser.');
@@ -175,16 +206,17 @@ function shader(type, src) {
   return s;
 }
 const vs = shader(gl.VERTEX_SHADER, `
-attribute vec3 a_pos; attribute vec4 a_col; attribute float a_vis;
+attribute vec3 a_pos; attribute vec4 a_col; attribute float a_vis; attribute float a_highlight;
 uniform mat4 u_mvp; uniform float u_opacity;
-varying vec4 v_col; varying vec3 v_pos;
+varying vec4 v_col; varying vec3 v_pos; varying float v_highlight;
 void main() {
   gl_Position = u_mvp * vec4(a_pos, 1.0);
   v_col = vec4(a_col.rgb, a_col.a * u_opacity * a_vis);
   v_pos = a_pos;
+  v_highlight = a_highlight;
 }`);
 const fs = shader(gl.FRAGMENT_SHADER, `
-precision mediump float; varying vec4 v_col; varying vec3 v_pos;
+precision mediump float; varying vec4 v_col; varying vec3 v_pos; varying float v_highlight;
 uniform float u_phi_cut_enabled; uniform float u_phi_cut_start; uniform float u_phi_cut_width;
 void main() {
   if (v_col.a < 0.01) discard;
@@ -193,22 +225,24 @@ void main() {
     float relative_phi = mod(atan(v_pos.y, v_pos.x) - u_phi_cut_start + two_pi, two_pi);
     if (relative_phi <= u_phi_cut_width) discard;
   }
-  gl_FragColor = v_col;
+  vec3 tinted = mix(v_col.rgb, vec3(1.0, 0.82, 0.2), 0.5 * v_highlight);
+  gl_FragColor = vec4(tinted, v_col.a);
 }`);
 const prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog); gl.useProgram(prog);
 const locPos = gl.getAttribLocation(prog, 'a_pos');
 const locCol = gl.getAttribLocation(prog, 'a_col');
 const locVis = gl.getAttribLocation(prog, 'a_vis');
+const locHighlight = gl.getAttribLocation(prog, 'a_highlight');
 function makeBuffer(data, usage=gl.DYNAMIC_DRAW) {
   const buf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, data, usage);
   return buf;
 }
-function setAttrib(loc, buf, size) {
+function setAttrib(loc, buf, size, type=gl.FLOAT, normalized=false) {
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+  gl.vertexAttribPointer(loc, size, type, normalized, 0, 0);
 }
 function bindArray(name, data, size) {
   const loc = gl.getAttribLocation(prog, name);
@@ -219,12 +253,120 @@ function bindArray(name, data, size) {
 const surfacePosBuf = bindArray('a_pos', positions, 3);
 const surfaceColBuf = bindArray('a_col', colors, 4);
 const visibleBuf = bindArray('a_vis', visible, 1);
+const highlight = new Float32Array(ids.length);
+const highlightBuf = bindArray('a_highlight', highlight, 1);
 const uMvp = gl.getUniformLocation(prog, 'u_mvp');
 const uOpacity = gl.getUniformLocation(prog, 'u_opacity');
 const uPhiCutEnabled = gl.getUniformLocation(prog, 'u_phi_cut_enabled');
 const uPhiCutStart = gl.getUniformLocation(prog, 'u_phi_cut_start');
 const uPhiCutWidth = gl.getUniformLocation(prog, 'u_phi_cut_width');
 let wireBuffers = null;
+
+// --- Depth-correct picking: an offscreen ID buffer -----------------------
+// Replaces vertex-sampling (which could miss a large face or select an
+// occluded object) with an exact, depth-tested render-to-texture pass:
+// every triangle's object id is encoded as a colour, drawn once per click
+// into its own framebuffer, then read back at the clicked pixel.
+const idVs = shader(gl.VERTEX_SHADER, `
+attribute vec3 a_pos; attribute vec4 a_id_color; attribute float a_vis;
+uniform mat4 u_mvp;
+varying vec4 v_id_color; varying float v_vis; varying vec3 v_pos;
+void main() {
+  gl_Position = u_mvp * vec4(a_pos, 1.0);
+  v_id_color = a_id_color;
+  v_vis = a_vis;
+  v_pos = a_pos;
+}`);
+const idFs = shader(gl.FRAGMENT_SHADER, `
+precision mediump float;
+varying vec4 v_id_color; varying float v_vis; varying vec3 v_pos;
+uniform float u_phi_cut_enabled; uniform float u_phi_cut_start; uniform float u_phi_cut_width;
+void main() {
+  if (v_vis < 0.5) discard;
+  if (u_phi_cut_enabled > 0.5 && u_phi_cut_width > 0.0) {
+    const float two_pi = 6.28318530718;
+    float relative_phi = mod(atan(v_pos.y, v_pos.x) - u_phi_cut_start + two_pi, two_pi);
+    if (relative_phi <= u_phi_cut_width) discard;
+  }
+  gl_FragColor = v_id_color;
+}`);
+const idProg = gl.createProgram(); gl.attachShader(idProg, idVs); gl.attachShader(idProg, idFs); gl.linkProgram(idProg);
+const idLocPos = gl.getAttribLocation(idProg, 'a_pos');
+const idLocVis = gl.getAttribLocation(idProg, 'a_vis');
+const idLocIdColor = gl.getAttribLocation(idProg, 'a_id_color');
+const idUMvp = gl.getUniformLocation(idProg, 'u_mvp');
+const idUPhiCutEnabled = gl.getUniformLocation(idProg, 'u_phi_cut_enabled');
+const idUPhiCutStart = gl.getUniformLocation(idProg, 'u_phi_cut_start');
+const idUPhiCutWidth = gl.getUniformLocation(idProg, 'u_phi_cut_width');
+
+// id+1, so a cleared (0,0,0,0) pixel decodes to "no object" (-1).
+const idColors = new Uint8Array(ids.length * 4);
+for (let i = 0; i < ids.length; i++) {
+  const encoded = ids[i] + 1;
+  idColors[i*4] = encoded & 255;
+  idColors[i*4+1] = (encoded >> 8) & 255;
+  idColors[i*4+2] = (encoded >> 16) & 255;
+  idColors[i*4+3] = 255;
+}
+const idColorBuf = makeBuffer(idColors, gl.STATIC_DRAW);
+
+let pickFbo = null, pickTexture = null, pickDepthBuffer = null, pickWidth = 0, pickHeight = 0;
+function ensurePickFramebuffer(width, height) {
+  if (pickFbo && pickWidth === width && pickHeight === height) return;
+  if (!pickFbo) {
+    pickFbo = gl.createFramebuffer();
+    pickTexture = gl.createTexture();
+    pickDepthBuffer = gl.createRenderbuffer();
+  }
+  pickWidth = width; pickHeight = height;
+  gl.bindTexture(gl.TEXTURE_2D, pickTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.bindRenderbuffer(gl.RENDERBUFFER, pickDepthBuffer);
+  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, pickTexture, 0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, pickDepthBuffer);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+function pickAt(devX, devY) {
+  if (devX < 0 || devY < 0 || devX >= canvas.width || devY >= canvas.height) return -1;
+  ensurePickFramebuffer(canvas.width, canvas.height);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFbo);
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return -1;
+  }
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.disable(gl.BLEND);
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clearDepth(1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(idProg);
+  const cx = viewCenter[0] + panX, cy = viewCenter[1] + panY, cz = viewCenter[2];
+  const eye = [cx + dist*Math.cos(pitch)*Math.sin(yaw), cy + dist*Math.sin(pitch), cz + dist*Math.cos(pitch)*Math.cos(yaw)];
+  const mvp = mat4mul(perspective(45*Math.PI/180, canvas.width/canvas.height, radius/500, radius*20), lookAt(eye, [cx,cy,cz], cameraUp));
+  gl.uniformMatrix4fv(idUMvp, false, mvp);
+  const phiCut = phiCutRadians();
+  gl.uniform1f(idUPhiCutEnabled, phiCut.enabled ? 1 : 0);
+  gl.uniform1f(idUPhiCutStart, phiCut.start);
+  gl.uniform1f(idUPhiCutWidth, phiCut.width);
+  setAttrib(idLocPos, surfacePosBuf, 3);
+  setAttrib(idLocVis, visibleBuf, 1);
+  setAttrib(idLocIdColor, idColorBuf, 4, gl.UNSIGNED_BYTE, true);
+  gl.drawArrays(gl.TRIANGLES, 0, positions.length/3);
+  const pixel = new Uint8Array(4);
+  gl.readPixels(devX, devY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.useProgram(prog);
+  const encoded = pixel[0] + pixel[1]*256 + pixel[2]*65536;
+  return encoded === 0 ? -1 : encoded - 1;
+}
 
 const bbox = SCENE.meta.bbox;
 const center = [(bbox[0]+bbox[3])/2, (bbox[1]+bbox[4])/2, (bbox[2]+bbox[5])/2];
@@ -244,6 +386,7 @@ const axisVisible = new Float32Array(6); axisVisible.fill(1);
 const axisPosBuf = makeBuffer(axisPositions, gl.STATIC_DRAW);
 const axisColBuf = makeBuffer(axisColors, gl.STATIC_DRAW);
 const axisVisBuf = makeBuffer(axisVisible, gl.STATIC_DRAW);
+const axisHighlightBuf = makeBuffer(new Float32Array(6), gl.STATIC_DRAW);
 let yaw = -0.65, pitch = 0.45, dist = radius * 1.35, panX = 0, panY = 0;
 let cameraUp = [0,1,0];
 // The camera always looks at viewCenter, not the fixed global center -- a
@@ -285,13 +428,6 @@ function phiCutRadians() {
     start: +document.getElementById('phiCutStart').value * Math.PI / 180,
     width: +document.getElementById('phiCutWidth').value * Math.PI / 180,
   };
-}
-function pointIsPhiCut(x, y) {
-  const cut = phiCutRadians();
-  if (!cut.enabled || cut.width <= 0) return false;
-  const twoPi = 2*Math.PI;
-  const relative = ((Math.atan2(y, x) - cut.start) % twoPi + twoPi) % twoPi;
-  return relative <= cut.width;
 }
 function updateAxisLabels(mvp, enabled) {
   const endpoints = [
@@ -341,6 +477,10 @@ function buildWireBuffers() {
     posBuf: makeBuffer(linePositions, gl.STATIC_DRAW),
     colBuf: makeBuffer(lineColors),
     visBuf: makeBuffer(lineVisible),
+    // The wireframe overlay never highlights the selected object itself
+    // (only the main surface tints); this buffer stays all-zero so the
+    // shared a_highlight attribute has a correctly-sized source to read.
+    highlightBuf: makeBuffer(new Float32Array(lineVisible.length), gl.STATIC_DRAW),
   };
   return wireBuffers;
 }
@@ -362,6 +502,15 @@ function updateWireVisibility() {
   gl.bindBuffer(gl.ARRAY_BUFFER, wireBuffers.visBuf);
   gl.bufferData(gl.ARRAY_BUFFER, wireBuffers.visible, gl.DYNAMIC_DRAW);
 }
+function updateWireHighlight() {
+  if (!wireBuffers) return;
+  const wireHighlight = new Float32Array(wireBuffers.ids.length);
+  for (let i = 0; i < wireBuffers.ids.length; i++) {
+    wireHighlight[i] = (wireBuffers.ids[i] === selectedObjectId) ? 1 : 0;
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, wireBuffers.highlightBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, wireHighlight, gl.DYNAMIC_DRAW);
+}
 function render() {
   resize();
   clearCanvas();
@@ -375,6 +524,7 @@ function render() {
   setAttrib(locPos, surfacePosBuf, 3);
   setAttrib(locCol, surfaceColBuf, 4);
   setAttrib(locVis, visibleBuf, 1);
+  setAttrib(locHighlight, highlightBuf, 1);
   gl.uniform1f(uOpacity, +document.getElementById('opacity').value/100);
   const phiCut = phiCutRadians();
   gl.uniform1f(uPhiCutEnabled, phiCut.enabled ? 1 : 0);
@@ -386,6 +536,7 @@ function render() {
     setAttrib(locPos, wire.posBuf, 3);
     setAttrib(locCol, wire.colBuf, 4);
     setAttrib(locVis, wire.visBuf, 1);
+    setAttrib(locHighlight, wire.highlightBuf, 1);
     gl.uniform1f(uOpacity, 1.0);
     gl.drawArrays(gl.LINES, 0, wire.positions.length/3);
   }
@@ -394,6 +545,7 @@ function render() {
     setAttrib(locPos, axisPosBuf, 3);
     setAttrib(locCol, axisColBuf, 4);
     setAttrib(locVis, axisVisBuf, 1);
+    setAttrib(locHighlight, axisHighlightBuf, 1);
     gl.uniform1f(uOpacity, 1.0);
     gl.uniform1f(uPhiCutEnabled, 0.0);
     gl.drawArrays(gl.LINES, 0, axisPositions.length/3);
@@ -454,30 +606,16 @@ function applyFilters() {
   gl.bindBuffer(gl.ARRAY_BUFFER, visibleBuf); gl.bufferData(gl.ARRAY_BUFFER, visible, gl.DYNAMIC_DRAW);
   updateWireVisibility();
   updateAllRowStates();
+  if (selectedObjectId !== null && !objectVisible[selectedObjectId]) clearSelection();
 }
 ['search','solidType'].forEach(id => document.getElementById(id).addEventListener('input', applyFilters));
 
 canvas.addEventListener('click', e => {
-  const rect = canvas.getBoundingClientRect(), x = e.clientX-rect.left, y = e.clientY-rect.top;
-  let best=-1, bestD=14*14;
-  const aspect = canvas.width/canvas.height;
-  const cx = viewCenter[0] + panX, cy = viewCenter[1] + panY, cz = viewCenter[2];
-  const eye = [cx + dist*Math.cos(pitch)*Math.sin(yaw), cy + dist*Math.sin(pitch), cz + dist*Math.cos(pitch)*Math.cos(yaw)];
-  const mvp = mat4mul(perspective(45*Math.PI/180, aspect, radius/500, radius*20), lookAt(eye, [cx,cy,cz], cameraUp));
-  for (let i=0; i<positions.length; i+=30) {
-    const id = ids[i/3]; if (!visible[i/3]) continue;
-    const px=positions[i], py=positions[i+1], pz=positions[i+2];
-    if (pointIsPhiCut(px, py)) continue;
-    const tx=mvp[0]*px+mvp[4]*py+mvp[8]*pz+mvp[12], ty=mvp[1]*px+mvp[5]*py+mvp[9]*pz+mvp[13], tw=mvp[3]*px+mvp[7]*py+mvp[11]*pz+mvp[15];
-    if (tw <= 0) continue;
-    const sx=(tx/tw*0.5+0.5)*rect.width, sy=(-ty/tw*0.5+0.5)*rect.height;
-    const d=(sx-x)*(sx-x)+(sy-y)*(sy-y);
-    if (d < bestD) { bestD=d; best=id; }
-  }
-  if (best >= 0) {
-    document.getElementById('details').textContent = JSON.stringify(SCENE.objects[best], null, 2);
-    revealInHierarchy(SCENE.objects[best].path);
-  }
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const devX = Math.floor((e.clientX - rect.left) * dpr);
+  const devY = canvas.height - 1 - Math.floor((e.clientY - rect.top) * dpr);
+  selectObject(pickAt(devX, devY));
 });
 
 // --- Physical-volume hierarchy ------------------------------------------
@@ -618,7 +756,14 @@ function createRow(path, depth) {
   actions.append(isolateBtn, focusBtn);
 
   row.append(toggle, check, label, actions);
-  row.addEventListener('click', () => { selectedPath = path; focusRowElement(path); updateAllRowStates(); });
+  row.addEventListener('click', () => {
+    selectedPath = path;
+    const clickedNode = nodeByPath[path];
+    setHighlightedObject(clickedNode.rendered ? clickedNode.objectId : null);
+    updateInspector(path);
+    focusRowElement(path);
+    updateAllRowStates();
+  });
   row.addEventListener('keydown', e => handleRowKeydown(e, path));
   rowElements.set(path, {row, check, toggle, label});
   return row;
@@ -734,6 +879,110 @@ function revealInHierarchy(path) {
   const entry = rowElements.get(path);
   if (entry) entry.row.scrollIntoView({block: 'nearest'});
 }
+
+// --- Selection: viewport highlight + the "Picked Object" inspector -------
+let selectedObjectId = null;
+
+function setHighlightedObject(id) {
+  selectedObjectId = (id !== null && id >= 0) ? id : null;
+  for (let i = 0; i < ids.length; i++) highlight[i] = (ids[i] === selectedObjectId) ? 1 : 0;
+  gl.bindBuffer(gl.ARRAY_BUFFER, highlightBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, highlight, gl.DYNAMIC_DRAW);
+  updateWireHighlight();
+}
+
+function semanticPathFor(path) {
+  const segments = [];
+  let p = path;
+  while (p) {
+    const node = nodeByPath[p];
+    if (!node) break;
+    segments.unshift(node.semanticName);
+    p = node.parentPath;
+  }
+  return segments.join('/');
+}
+function formatMatrixRows(flat) {
+  const rows = [];
+  for (let r = 0; r < 3; r++) {
+    rows.push(flat.slice(r * 4, r * 4 + 4).map(v => v.toFixed(3)).join('  '));
+  }
+  return rows.join('\n');
+}
+function formatParams(params) {
+  const keys = Object.keys(params);
+  if (!keys.length) return '(none -- Boolean solid; see Accuracy Notes)';
+  return keys.map(k => `${k}: ${params[k].toFixed(3)}`).join('\n');
+}
+function formatBounds(bbox) {
+  return `min: ${bbox.slice(0, 3).map(v => v.toFixed(3)).join(', ')}\n`
+    + `max: ${bbox.slice(3, 6).map(v => v.toFixed(3)).join(', ')}`;
+}
+
+function updateInspector(path) {
+  const emptyEl = document.getElementById('detailsEmpty');
+  const contentEl = document.getElementById('detailsContent');
+  const node = path ? nodeByPath[path] : null;
+  if (!node) {
+    emptyEl.style.display = '';
+    contentEl.style.display = 'none';
+    return;
+  }
+  emptyEl.style.display = 'none';
+  contentEl.style.display = '';
+  document.getElementById('detailPath').textContent = path;
+  document.getElementById('detailSemanticPath').textContent = semanticPathFor(path);
+  document.getElementById('detailVolume').textContent = node.semanticVolume
+    + (node.semanticVolume !== node.volume ? ` (${node.volume})` : '');
+
+  const approximatedEl = document.getElementById('detailApproximated');
+  const materialEl = document.getElementById('detailMaterial');
+  const solidTypeEl = document.getElementById('detailSolidType');
+  if (node.rendered && node.objectId !== undefined) {
+    const obj = SCENE.objects[node.objectId];
+    const solidInfo = SOLIDS[obj.solid] || { type: obj.solidType, params: {} };
+    materialEl.textContent = obj.material;
+    solidTypeEl.textContent = obj.solidType;
+    document.getElementById('detailParams').textContent = formatParams(solidInfo.params);
+    document.getElementById('detailBounds').textContent = formatBounds(obj.bbox);
+    approximatedEl.style.display = approximatedSolids.has(obj.solid) ? '' : 'none';
+  } else {
+    materialEl.textContent = `(none -- ${node.isAssembly ? 'assembly' : 'container'}, not rendered)`;
+    solidTypeEl.textContent = '--';
+    document.getElementById('detailParams').textContent = '--';
+    document.getElementById('detailBounds').textContent = '--';
+    approximatedEl.style.display = 'none';
+  }
+  document.getElementById('detailLocalMatrix').textContent = node.localMatrix
+    ? formatMatrixRows(node.localMatrix) : '(world root)';
+  document.getElementById('detailGlobalMatrix').textContent = node.globalMatrix
+    ? formatMatrixRows(node.globalMatrix) : '--';
+}
+
+function selectObject(id) {
+  if (id === null || id < 0) { clearSelection(); return; }
+  const path = SCENE.objects[id].path;
+  setHighlightedObject(id);
+  updateInspector(path);
+  revealInHierarchy(path);
+}
+function clearSelection() {
+  selectedObjectId = null;
+  selectedPath = null;
+  setHighlightedObject(null);
+  updateInspector(null);
+  updateAllRowStates();
+}
+
+document.getElementById('detailCopyPath').onclick = () => {
+  if (selectedPath) navigator.clipboard.writeText(selectedPath).catch(() => {});
+};
+document.getElementById('detailCopyName').onclick = () => {
+  const node = selectedPath ? nodeByPath[selectedPath] : null;
+  if (node) navigator.clipboard.writeText(node.name).catch(() => {});
+};
+document.getElementById('detailFocus').onclick = () => { if (selectedPath) focusOnPath(selectedPath); };
+document.getElementById('detailIsolate').onclick = () => { if (selectedPath) toggleIsolate(selectedPath); };
 
 renderTree();
 </script>

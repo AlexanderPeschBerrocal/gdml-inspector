@@ -24,10 +24,7 @@ from .pyg4ometry_backend import Pyg4ometrySceneBuilder
 DEFAULT_TOLERANCE = 1e-6
 _BOOLEAN_SOLID_TYPES = {"union", "subtraction", "intersection"}
 
-
-class SolidInfo(TypedDict):
-    type: str
-    params: dict[str, float]
+SolidInfo = base.SolidInfo
 
 
 class DiffSceneDict(base.SceneDict):
