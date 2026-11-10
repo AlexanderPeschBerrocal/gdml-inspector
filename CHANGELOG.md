@@ -54,6 +54,15 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- A structured, filterable diagnostics panel in both viewers, replacing
+  the older flat warnings-text dump: filter by severity and category, and
+  download the full structured report as JSON directly from the viewer.
+  In the standalone viewer, a diagnostic that names a still-existing
+  volume or solid (not every one does -- see `docs/limitations.md`) gets
+  a "Show in hierarchy" button that reveals the affected node(s) using the
+  existing hierarchy search. Finishes the browser-UI half of issue #8;
+  the backend/CLI half (`meta.diagnostics`, `--strict`, `--report`, etc.)
+  already shipped in an earlier release.
 - Depth-correct object picking and a detailed placement inspector in the
   standalone viewer (`gdml-inspector`, not yet `--lazy`): clicking now
   renders an offscreen, depth-tested WebGL ID buffer and reads back the
@@ -83,6 +92,12 @@ process (issue #22) this now builds on top of this policy.
 
 ### Fixed
 
+- The standalone viewer injected GDML-controlled names (material names,
+  the warnings list, and the hierarchy tree's placement/volume labels)
+  into the page as unescaped HTML. A material, volume, or placement name
+  containing HTML-special characters could inject markup into the
+  generated viewer; the lazy viewer already escaped its own equivalents
+  correctly. Fixed by applying the same escaping standalone-wide.
 - `python -m gdml_inspector --version` used to print `__main__.py
   <version>` (argparse's default `prog` is `sys.argv[0]`'s basename, which
   for `-m` invocation is `__main__.py`); every CLI mode now sets an
