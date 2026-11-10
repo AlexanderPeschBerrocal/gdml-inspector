@@ -5,6 +5,7 @@ permissions:
 jobs:
   pyg4ometry:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Install the project uv version
