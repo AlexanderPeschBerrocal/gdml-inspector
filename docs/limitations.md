@@ -126,6 +126,28 @@ suite is not a claim that those gaps have been fixed.
   glTF mesh at all, same as the other exporters; the diagnostic is still
   recorded and reachable through `--report`, `--strict`/`--fail-on` are not
   exposed for this mode.
+- Nodes are keyed by placement path. Two anonymous `<physvol>` elements (no
+  `name` attribute) referencing the same volume under the same mother fall
+  back to an identical path (the referenced volume's own name) and collide
+  into a single node, silently merging what should be two placements. Real
+  Geant4-generated GDML always auto-names placements uniquely (a pointer-
+  suffixed name per placement), so this only affects hand-written fixtures
+  with deliberately anonymous, repeated siblings.
+
+## Physical-volume hierarchy (standalone viewer)
+
+- Available in the standalone (`gdml-inspector`) viewer only. The lazy
+  viewer's manifest has no per-placement data today -- only subsystem/layer
+  chunk aggregates -- so it has no equivalent tree yet; see issue #2.
+- Shares the glTF exporter's path-keying limitation above: two anonymous,
+  identically-unnamed placements of the same volume under the same mother
+  collide into one tree node.
+- The tree expands incrementally (an unexpanded subtree adds no rows to the
+  DOM) rather than using virtualised/windowed scrolling, which the
+  underlying roadmap issue allows as an alternative for large trees.
+- Hide/isolate cooperate with the existing material, solid-type, and
+  free-text filters; there is no clipping filter yet for it to cooperate
+  with (see the roadmap for `#5`).
 
 ## Public API (`gdml_inspector.api`)
 

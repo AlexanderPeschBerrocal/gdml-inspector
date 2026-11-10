@@ -16,10 +16,13 @@ def test_single_file_export_from_different_working_directory(
         cli.main([str(example_gdml), "--backend", "python", "--out", str(output)]) == 0
     )
     document = output.read_text()
-    embedded = document.split("const SCENE = ", 1)[1].split(";\nconst canvas =", 1)[0]
+    embedded = document.split("const SCENE = ", 1)[1].split(";\nconst HIERARCHY =", 1)[
+        0
+    ]
     assert json.loads(embedded)["meta"]["objects"] == 5
     assert "GDML Inspector" in document
     assert "__SCENE__" not in document
+    assert "__HIERARCHY__" not in document
     assert "<script src=" not in document
 
 

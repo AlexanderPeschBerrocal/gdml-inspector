@@ -8,6 +8,7 @@ from gdml_inspector.diff import DiffGDMLSceneBuilder
 from gdml_inspector.geometry import GDMLSceneBuilder
 from gdml_inspector.gltf import GltfGDMLSceneBuilder, build_gltf
 from gdml_inspector.lazy import LazyGDMLSceneBuilder
+from gdml_inspector.standalone import HierarchyGDMLSceneBuilder
 
 DEFAULT_OPTIONS = {
     "quality": "fast",
@@ -40,6 +41,15 @@ def diff_builder(path, **options):
 def api_geometry(path, **options):
     """Load a Geometry with the usual test defaults via Geometry.load()."""
     return Geometry.load(path, **(DEFAULT_OPTIONS | options))
+
+
+def hierarchy_nodes(path, **options):
+    """Build a HierarchyGDMLSceneBuilder with the usual test defaults and
+    return (scene, nodes_by_path)."""
+    builder = HierarchyGDMLSceneBuilder(path, **(DEFAULT_OPTIONS | options))
+    scene = builder.build()
+    nodes = builder.hierarchy_nodes(scene)
+    return scene, {node["path"]: node for node in nodes}
 
 
 def gltf_document(path, **options):
