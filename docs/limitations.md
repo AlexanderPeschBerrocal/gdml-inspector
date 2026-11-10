@@ -55,9 +55,20 @@ suite is not a claim that those gaps have been fixed.
   with per-severity/per-category totals in `meta.diagnosticSummary`.
   `meta.warnings` keeps its original human-readable strings for
   compatibility. `--strict` (optionally widened with `--fail-on`),
-  `--report`, and `--validate-only` read this from the CLI; the browser
-  viewers do not yet filter diagnostics, link one to its tree node, or offer
-  a download button for the report.
+  `--report`, and `--validate-only` read this from the CLI. Both browser
+  viewers now render this structured list directly (filterable by severity
+  and category, with a JSON download button), instead of only the older
+  flattened `meta.warnings` strings.
+- "Show in hierarchy" (standalone viewer only, since lazy mode has no
+  hierarchy tree) is derived purely client-side from a diagnostic's `code`
+  and (for `duplicate-definition`) `construct` -- not every diagnostic
+  names something that still exists as a placement or solid (an
+  unresolvable numeric expression's identifier is an attribute key, and a
+  missing-reference diagnostic names something that was never placed), so
+  only `unsupported-daughter` (a volume name) and
+  `missing-solid-reference`/`boolean-approximated`/
+  `unsupported-solid-type`/`pyg4ometry-fallback`/`duplicate-definition`
+  with `construct=="solid"` (a solid ref) offer a link.
 - `--strict`/`--fail-on`/`--report` are not applied by `--reuse-assets`,
   which only rewrites the HTML shell around existing binary chunks without
   re-parsing the source GDML.

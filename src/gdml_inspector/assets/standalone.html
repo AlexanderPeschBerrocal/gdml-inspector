@@ -30,7 +30,9 @@ input[type=checkbox] { width: auto; }
 .row { display: flex; gap: 8px; align-items: center; }
 .row > * { flex: 1; }
 .pill { display: inline-block; padding: 2px 7px; border-radius: 99px; background: var(--pill); margin: 2px; font-size: 12px; }
-.warn { background: var(--warn-bg); border: 1px solid var(--warn-border); padding: 8px; border-radius: 6px; font-size: 12px; max-height: 120px; overflow: auto; }
+.warn { background: var(--warn-bg); border: 1px solid var(--warn-border); padding: 8px; border-radius: 6px; font-size: 12px; max-height: 200px; overflow: auto; }
+.diagnostic-row { margin: 4px 0; padding-bottom: 4px; border-bottom: 1px solid var(--warn-border); display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.diagnostic-row:last-child { border-bottom: none; }
 #details { font-size: 12px; background: var(--soft); padding: 8px; border-radius: 6px; max-height: 320px; overflow: auto; }
 .inspector-field { display: grid; grid-template-columns: 110px 1fr; gap: 6px; margin: 2px 0; word-break: break-word; }
 .inspector-field span { color: var(--muted); }
@@ -133,6 +135,11 @@ input[type=checkbox] { width: auto; }
     </div>
   </div>
   <h2>Accuracy Notes</h2>
+  <div class="row">
+    <select id="diagnosticSeverity"></select>
+    <select id="diagnosticCategory"></select>
+  </div>
+  <button id="downloadDiagnostics" type="button">Download report (JSON)</button>
   <div class="warn" id="warnings"></div>
 </aside>
 <main>
@@ -157,7 +164,10 @@ document.getElementById('vertexCount').textContent = SCENE.meta.vertices.toLocal
 document.getElementById('backendName').textContent = SCENE.meta.backend || 'unknown';
 document.getElementById('qualityName').textContent = SCENE.meta.quality || 'unknown';
 document.getElementById('worldName').textContent = SCENE.meta.world;
-document.getElementById('warnings').innerHTML = SCENE.meta.warnings.length ? SCENE.meta.warnings.map(x => `<div>${x}</div>`).join('') : 'No geometry warnings.';
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
 
 const positions = new Float32Array(SCENE.positions);
 const colorsRaw = new Uint8Array(SCENE.colors);
@@ -172,7 +182,8 @@ const materialEnabled = Object.fromEntries(materialNames.map(name => [name, true
 
 function fillSelect(id, title, values) {
   const el = document.getElementById(id);
-  el.innerHTML = `<option value="">All ${title}</option>` + values.map(v => `<option value="${v}">${v}</option>`).join('');
+  el.innerHTML = `<option value="">All ${escapeHtml(title)}</option>`
+    + values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
 }
 fillSelect('solidType', 'solid types', Object.keys(SCENE.meta.solidTypes).sort());
 
@@ -185,9 +196,9 @@ function renderMaterialToggles() {
   box.className = 'material-list';
   box.innerHTML = materialNames.map(name => `
     <label class="material-item">
-      <input type="checkbox" data-material="${name}" ${materialEnabled[name] ? 'checked' : ''}>
+      <input type="checkbox" data-material="${escapeHtml(name)}" ${materialEnabled[name] ? 'checked' : ''}>
       <span class="swatch" style="background:${materialColor(name)}"></span>
-      <span title="${name}">${name}</span>
+      <span title="${escapeHtml(name)}">${escapeHtml(name)}</span>
       <span>${SCENE.meta.materials[name].toLocaleString()}</span>
     </label>
   `).join('');
@@ -199,6 +210,79 @@ function renderMaterialToggles() {
   });
 }
 renderMaterialToggles();
+
+// --- Diagnostics panel ("Accuracy Notes") ---------------------------------
+// SCENE.meta.diagnostics/diagnosticSummary already carry everything this
+// needs (code/severity/category/construct/identifier/backend/count); this
+// used to only render the older flattened meta.warnings strings.
+function diagnosticIdentifierKind(d) {
+  // Derived from the exact diagnose() call sites in geometry.py/lazy.py/
+  // pyg4ometry_backend.py -- not a backend field, since code (and, for
+  // duplicate-definition, construct) already fully determines this:
+  //   unsupported-daughter                        -> identifier is a volume name
+  //   missing-solid-reference, boolean-approximated,
+  //     unsupported-solid-type, pyg4ometry-fallback -> identifier is a solid ref
+  //   duplicate-definition, construct=="volume"    -> volume name
+  //   duplicate-definition, construct=="solid"     -> solid ref
+  //   everything else (duplicate rotation/scale/position/assembly
+  //     definitions, unevaluable-expression's attribute-key identifier,
+  //     missing-volume-reference's never-placed ref, limit-reached's
+  //     empty identifier) -> not a volume or solid name, not linkable
+  if (d.code === 'unsupported-daughter') return 'volume';
+  if (d.code === 'duplicate-definition') {
+    if (d.construct === 'volume') return 'volume';
+    if (d.construct === 'solid') return 'solid';
+    return '';
+  }
+  if (['missing-solid-reference', 'boolean-approximated', 'unsupported-solid-type', 'pyg4ometry-fallback'].includes(d.code)) {
+    return 'solid';
+  }
+  return '';
+}
+function matchesDiagnosticFilters(d) {
+  const severity = document.getElementById('diagnosticSeverity').value;
+  const category = document.getElementById('diagnosticCategory').value;
+  return (!severity || d.severity === severity) && (!category || d.category === category);
+}
+function renderDiagnostics() {
+  const box = document.getElementById('warnings');
+  const matching = SCENE.meta.diagnostics.filter(matchesDiagnosticFilters);
+  if (!matching.length) {
+    box.textContent = SCENE.meta.diagnostics.length ? 'No diagnostics match this filter.' : 'No geometry warnings.';
+    return;
+  }
+  box.innerHTML = matching.map(d => {
+    const countSuffix = d.count > 1 ? ` <span class="pill">x${d.count}</span>` : '';
+    const kind = diagnosticIdentifierKind(d);
+    const linkBtn = kind
+      ? `<button type="button" class="tree-action-btn diagnostic-link" data-query="${escapeHtml(d.identifier)}">Show in hierarchy</button>`
+      : '';
+    return `<div class="diagnostic-row"><b>${escapeHtml(d.severity)}</b> ${escapeHtml(d.message)}${countSuffix} ${linkBtn}</div>`;
+  }).join('');
+  box.querySelectorAll('.diagnostic-link').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const search = document.getElementById('hierarchySearch');
+      search.value = btn.dataset.query;
+      applyHierarchySearch();
+      search.scrollIntoView({block: 'nearest'});
+    });
+  });
+}
+fillSelect('diagnosticSeverity', 'severities', Array.from(new Set(SCENE.meta.diagnostics.map(d => d.severity))).sort());
+fillSelect('diagnosticCategory', 'categories', Array.from(new Set(SCENE.meta.diagnostics.map(d => d.category))).sort());
+['diagnosticSeverity', 'diagnosticCategory'].forEach(id => document.getElementById(id).addEventListener('input', renderDiagnostics));
+renderDiagnostics();
+document.getElementById('downloadDiagnostics').onclick = () => {
+  const blob = new Blob([JSON.stringify(SCENE.meta.diagnostics, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (SCENE.meta.sourceFile || 'diagnostics').replace(/\.[^.]+$/, '') + '.diagnostics.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 
 function shader(type, src) {
   const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
@@ -740,8 +824,8 @@ function createRow(path, depth) {
   const label = document.createElement('span');
   label.className = 'tree-label';
   const differs = node.semanticVolume && node.semanticVolume !== node.name;
-  label.innerHTML = node.name
-    + (differs ? ` <span class="tree-muted">(${node.semanticVolume})</span>` : '')
+  label.innerHTML = escapeHtml(node.name)
+    + (differs ? ` <span class="tree-muted">(${escapeHtml(node.semanticVolume)})</span>` : '')
     + (!node.rendered ? ` <span class="tree-muted">${node.isAssembly ? '(assembly)' : '(container)'}</span>` : '')
     + (nodeIsApproximated(node) ? ' <span class="tree-warn" title="Approximated geometry">⚠</span>' : '');
 
@@ -848,9 +932,13 @@ function handleRowKeydown(e, path) {
 }
 
 function matchesHierarchySearch(node, q) {
-  return node.name.toLowerCase().includes(q)
+  if (node.name.toLowerCase().includes(q)
     || node.semanticVolume.toLowerCase().includes(q)
-    || node.path.toLowerCase().includes(q);
+    || node.path.toLowerCase().includes(q)) return true;
+  if (node.rendered && node.objectId !== undefined) {
+    return SCENE.objects[node.objectId].solid.toLowerCase().includes(q);
+  }
+  return false;
 }
 function applyHierarchySearch() {
   const q = document.getElementById('hierarchySearch').value.toLowerCase().trim();

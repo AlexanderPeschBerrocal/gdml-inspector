@@ -44,7 +44,10 @@ input[type=range] { width: 100%; }
 .material { display: grid; grid-template-columns: 12px 1fr auto; gap: 7px; align-items: center; font-size: 11px; margin: 3px 0; }
 .swatch { width: 11px; height: 11px; border-radius: 2px; }
 #overlay { position: absolute; right: 12px; top: 12px; background: #091626dd; border: 1px solid #314761; border-radius: 8px; padding: 8px 10px; font-size: 11px; pointer-events: none; }
-#warnings { max-height: 100px; overflow: auto; }
+#warnings { max-height: 160px; overflow: auto; }
+.diagnostic-row { margin: 4px 0; padding-bottom: 4px; border-bottom: 1px solid #2c4059; }
+.diagnostic-row:last-child { border-bottom: none; }
+.diagnostic-count { color: #8fa6c0; }
 </style>
 </head>
 <body>
@@ -95,6 +98,11 @@ input[type=range] { width: 100%; }
   <h2>Materials</h2>
   <div id="materials"></div>
   <h2>Warnings</h2>
+  <div class="row">
+    <select id="diagnosticSeverity"></select>
+    <select id="diagnosticCategory"></select>
+  </div>
+  <button id="downloadDiagnostics" type="button">Download report (JSON)</button>
   <div id="warnings" class="muted"></div>
   <h2>Status</h2>
   <div id="status" class="muted">Select a layer to load it.</div>
@@ -115,7 +123,43 @@ if (!gl) throw new Error('WebGL is not available in this browser.');
 document.getElementById('source').textContent = `${MANIFEST.sourceFile} · ${MANIFEST.backend}/${MANIFEST.quality}`;
 document.getElementById('totalObjects').textContent = MANIFEST.objects.toLocaleString();
 document.getElementById('totalTriangles').textContent = MANIFEST.triangles.toLocaleString();
-document.getElementById('warnings').innerHTML = MANIFEST.warnings.length ? MANIFEST.warnings.map(x => `<div>${escapeHtml(x)}</div>`).join('') : 'No geometry warnings.';
+function fillSelect(id, title, values) {
+  const el = document.getElementById(id);
+  el.innerHTML = `<option value="">All ${escapeHtml(title)}</option>`
+    + values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+}
+function matchesDiagnosticFilters(d) {
+  const severity = document.getElementById('diagnosticSeverity').value;
+  const category = document.getElementById('diagnosticCategory').value;
+  return (!severity || d.severity === severity) && (!category || d.category === category);
+}
+function renderDiagnostics() {
+  const box = document.getElementById('warnings');
+  const matching = MANIFEST.diagnostics.filter(matchesDiagnosticFilters);
+  if (!matching.length) {
+    box.textContent = MANIFEST.diagnostics.length ? 'No diagnostics match this filter.' : 'No geometry warnings.';
+    return;
+  }
+  box.innerHTML = matching.map(d => {
+    const countSuffix = d.count > 1 ? ` <span class="diagnostic-count">x${d.count}</span>` : '';
+    return `<div class="diagnostic-row"><b>${escapeHtml(d.severity)}</b> ${escapeHtml(d.message)}${countSuffix}</div>`;
+  }).join('');
+}
+fillSelect('diagnosticSeverity', 'severities', Array.from(new Set(MANIFEST.diagnostics.map(d => d.severity))).sort());
+fillSelect('diagnosticCategory', 'categories', Array.from(new Set(MANIFEST.diagnostics.map(d => d.category))).sort());
+['diagnosticSeverity', 'diagnosticCategory'].forEach(id => document.getElementById(id).addEventListener('input', renderDiagnostics));
+renderDiagnostics();
+document.getElementById('downloadDiagnostics').onclick = () => {
+  const blob = new Blob([JSON.stringify(MANIFEST.diagnostics, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (MANIFEST.sourceFile || 'diagnostics').replace(/\.[^.]+$/, '') + '.diagnostics.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
