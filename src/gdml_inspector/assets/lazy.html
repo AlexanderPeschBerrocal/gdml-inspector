@@ -86,13 +86,8 @@ input[type=range] { width: 100%; }
   <h2>Subsystems and layers</h2>
   <div id="geometryTree"></div>
 
-  <h2>Phi cutout</h2>
-  <div class="row"><label><input id="cutEnabled" type="checkbox"> Enable phi cut</label></div>
-  <div class="row"><label>Mode</label><select id="cutMode"><option value="remove">Remove wedge</option><option value="keep">Keep wedge only</option></select></div>
-  <label class="muted">Wedge start: <b id="cutStartValue">0°</b></label>
-  <input id="cutStart" type="range" min="-180" max="180" value="0" step="1">
-  <label class="muted">Wedge width: <b id="cutWidthValue">90°</b></label>
-  <input id="cutWidth" type="range" min="1" max="359" value="90" step="1">
+  <h2>Clipping</h2>
+  <div id="clipPanel"></div>
   <div class="row"><label>Opacity</label><input id="opacity" type="range" min="10" max="100" value="100"></div>
 
   <h2>Materials</h2>
@@ -115,6 +110,7 @@ input[type=range] { width: 100%; }
   <div id="overlay">Drag: rotate · Shift+drag: pan · Wheel: zoom</div>
 </main>
 <script>
+__CLIPPING_JS__
 const MANIFEST = __MANIFEST__;
 const canvas = document.getElementById('canvas');
 const gl = canvas.getContext('webgl', { antialias: true, alpha: false });
@@ -293,17 +289,12 @@ attribute vec3 a_pos; attribute vec4 a_color;
 uniform mat4 u_mvp; varying vec4 v_color; varying vec3 v_world;
 void main() { v_world=a_pos; v_color=a_color; gl_Position=u_mvp*vec4(a_pos,1.0); }
 `);
-const fragmentShader=shader(gl.FRAGMENT_SHADER, `
-precision mediump float; varying vec4 v_color; varying vec3 v_world;
-uniform float u_opacity, u_cut_enabled, u_cut_start, u_cut_width, u_cut_mode;
-const float TWO_PI=6.28318530718;
+const fragmentShader=shader(gl.FRAGMENT_SHADER, CLIP_FRAGMENT_PRECISION + `
+varying vec4 v_color; varying vec3 v_world;
+uniform float u_opacity;
+` + CLIP_GLSL + `
 void main() {
-  if (u_cut_enabled>0.5) {
-    float phi=atan(v_world.y,v_world.x); if (phi<0.0) phi+=TWO_PI;
-    float relative=mod(phi-u_cut_start+TWO_PI,TWO_PI);
-    bool inside=relative<=u_cut_width;
-    if ((u_cut_mode<0.5 && inside) || (u_cut_mode>0.5 && !inside)) discard;
-  }
+  if (clipDiscard(v_world)) discard;
   gl_FragColor=vec4(v_color.rgb,v_color.a*u_opacity);
 }
 `);
@@ -312,9 +303,8 @@ if (!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgr
 const locations={
   pos:gl.getAttribLocation(program,'a_pos'), color:gl.getAttribLocation(program,'a_color'),
   mvp:gl.getUniformLocation(program,'u_mvp'), opacity:gl.getUniformLocation(program,'u_opacity'),
-  cutEnabled:gl.getUniformLocation(program,'u_cut_enabled'), cutStart:gl.getUniformLocation(program,'u_cut_start'),
-  cutWidth:gl.getUniformLocation(program,'u_cut_width'), cutMode:gl.getUniformLocation(program,'u_cut_mode'),
 };
+const clipLoc=clipLocations(gl,program);
 function makeBuffer(values) { const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,values,gl.STATIC_DRAW); return b; }
 
 const bbox=MANIFEST.bbox;
@@ -370,11 +360,7 @@ function render() {
   const eye=[cx+dist*Math.cos(pitch)*Math.sin(yaw),cy+dist*Math.sin(pitch),cz+dist*Math.cos(pitch)*Math.cos(yaw)];
   const mvp=mat4mul(perspective(45*Math.PI/180,canvas.width/canvas.height,radius/1000,radius*30),lookAt(eye,[cx,cy,cz],cameraUp));
   gl.useProgram(program); gl.uniformMatrix4fv(locations.mvp,false,mvp); gl.uniform1f(locations.opacity,opacity);
-  const enabled=document.getElementById('cutEnabled').checked;
-  const start=(+document.getElementById('cutStart').value*Math.PI/180+Math.PI*2)%(Math.PI*2);
-  const width=+document.getElementById('cutWidth').value*Math.PI/180;
-  gl.uniform1f(locations.cutEnabled,enabled?1:0); gl.uniform1f(locations.cutStart,start); gl.uniform1f(locations.cutWidth,width);
-  gl.uniform1f(locations.cutMode,document.getElementById('cutMode').value==='keep'?1:0);
+  uploadClip(gl,clipLoc,clipData);
   for (const chunk of MANIFEST.chunks) {
     const state=states[chunk.key]; if(!state.loaded||!state.visible||!state.buffers)continue;
     gl.bindBuffer(gl.ARRAY_BUFFER,state.buffers.pos); gl.enableVertexAttribArray(locations.pos); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
@@ -385,7 +371,7 @@ function render() {
   if (axesEnabled) {
     gl.disable(gl.DEPTH_TEST);
     gl.uniform1f(locations.opacity,1);
-    gl.uniform1f(locations.cutEnabled,0);
+    uploadClip(gl,clipLoc,null);
     gl.bindBuffer(gl.ARRAY_BUFFER,axisPosBuffer); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
     gl.bindBuffer(gl.ARRAY_BUFFER,axisColorBuffer); gl.vertexAttribPointer(locations.color,4,gl.UNSIGNED_BYTE,true,0,0);
     gl.drawArrays(gl.LINES,0,6);
@@ -410,10 +396,7 @@ document.getElementById('viewXZNeg').onclick=()=>setCamera(0,-Math.PI/2,[0,0,1])
 document.getElementById('viewYZPos').onclick=()=>setCamera(Math.PI/2,0,[0,0,1]);
 document.getElementById('viewYZNeg').onclick=()=>setCamera(-Math.PI/2,0,[0,0,1]);
 document.getElementById('coordinateAxes').addEventListener('change',requestRender);
-for (const id of ['cutEnabled','cutMode','cutStart','cutWidth','opacity']) document.getElementById(id).addEventListener('input',()=>{
-  document.getElementById('cutStartValue').textContent=`${document.getElementById('cutStart').value}°`;
-  document.getElementById('cutWidthValue').textContent=`${document.getElementById('cutWidth').value}°`; requestRender();
-});
+document.getElementById('opacity').addEventListener('input',requestRender);
 document.getElementById('loadAll').onclick=async()=>{ for(const check of document.querySelectorAll('input[data-layer-key]'))check.checked=true; for(const key of Object.keys(grouped).flatMap(s=>Object.keys(grouped[s]).map(l=>`${s}\x1f${l}`)))await setLayer(key,true); };
 document.getElementById('hideAll').onclick=async()=>{ for(const check of document.querySelectorAll('input[data-layer-key]'))check.checked=false; for(const key of [...selectedLayers])await setLayer(key,false); };
 
@@ -422,6 +405,9 @@ function renderMaterials() {
   root.innerHTML=Object.entries(MANIFEST.materials).map(([name,count])=>{const c=MANIFEST.materialColors[name]||[128,128,128,255];return `<div class="material"><span class="swatch" style="background:rgba(${c[0]},${c[1]},${c[2]},${Math.max(c[3]/255,.35)})"></span><span title="${escapeHtml(name)}">${escapeHtml(name)}</span><span>${count.toLocaleString()}</span></div>`;}).join('');
 }
 
+// Shared clipping state (see assets/clipping.js).
+let clipData=null;
+buildClipPanel(document.getElementById('clipPanel'),{bbox:MANIFEST.bbox,onChange:data=>{clipData=data;requestRender();}});
 buildTree(); renderMaterials(); updateStats(); requestRender();
 for (const requested of MANIFEST.defaultLoad) {
   for (const [subsystem,layers] of Object.entries(grouped)) {

@@ -91,11 +91,8 @@ input[type=checkbox] { width: auto; }
   <label><input id="coordinateAxes" type="checkbox" checked> Coordinate axes</label>
   <div class="axis-key"><span class="axis-x">X</span><span class="axis-y">Y</span><span class="axis-z">Z</span></div>
   <label><input id="darkMode" type="checkbox"> Dark mode</label>
-  <h2>Phi cutout</h2>
-  <label><input id="phiCutEnabled" type="checkbox"> Remove azimuthal wedge</label>
-  <label class="row"><span>Start phi</span><input id="phiCutStart" type="range" min="-180" max="180" value="-45" step="1"><span id="phiCutStartValue" class="range-value">-45°</span></label>
-  <label class="row"><span>Width</span><input id="phiCutWidth" type="range" min="0" max="359" value="90" step="1"><span id="phiCutWidthValue" class="range-value">90°</span></label>
-  <div style="font-size:11px;color:var(--muted)">The wedge is measured counter-clockwise about global +z from its start angle.</div>
+  <h2>Clipping</h2>
+  <div id="clipPanel"></div>
   <h2>Filter</h2>
   <input id="search" placeholder="Search name, material, solid...">
   <select id="solidType"></select>
@@ -151,6 +148,7 @@ input[type=checkbox] { width: auto; }
 </main>
 </div>
 <script>
+__CLIPPING_JS__
 const SCENE = __SCENE__;
 const HIERARCHY = __HIERARCHY__;
 const SOLIDS = __SOLIDS__;
@@ -284,6 +282,14 @@ document.getElementById('downloadDiagnostics').onclick = () => {
   URL.revokeObjectURL(url);
 };
 
+// Shared clipping state (see assets/clipping.js); every fragment shader
+// below, including the picking pass, applies it through clipDiscard().
+let clipData = null;
+buildClipPanel(document.getElementById('clipPanel'), {
+  bbox: SCENE.meta.bbox,
+  onChange: data => { clipData = data; },
+});
+
 function shader(type, src) {
   const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
   if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
@@ -299,16 +305,12 @@ void main() {
   v_pos = a_pos;
   v_highlight = a_highlight;
 }`);
-const fs = shader(gl.FRAGMENT_SHADER, `
-precision mediump float; varying vec4 v_col; varying vec3 v_pos; varying float v_highlight;
-uniform float u_phi_cut_enabled; uniform float u_phi_cut_start; uniform float u_phi_cut_width;
+const fs = shader(gl.FRAGMENT_SHADER, CLIP_FRAGMENT_PRECISION + `
+varying vec4 v_col; varying vec3 v_pos; varying float v_highlight;
+` + CLIP_GLSL + `
 void main() {
   if (v_col.a < 0.01) discard;
-  if (u_phi_cut_enabled > 0.5 && u_phi_cut_width > 0.0) {
-    const float two_pi = 6.28318530718;
-    float relative_phi = mod(atan(v_pos.y, v_pos.x) - u_phi_cut_start + two_pi, two_pi);
-    if (relative_phi <= u_phi_cut_width) discard;
-  }
+  if (clipDiscard(v_pos)) discard;
   vec3 tinted = mix(v_col.rgb, vec3(1.0, 0.82, 0.2), 0.5 * v_highlight);
   gl_FragColor = vec4(tinted, v_col.a);
 }`);
@@ -341,9 +343,7 @@ const highlight = new Float32Array(ids.length);
 const highlightBuf = bindArray('a_highlight', highlight, 1);
 const uMvp = gl.getUniformLocation(prog, 'u_mvp');
 const uOpacity = gl.getUniformLocation(prog, 'u_opacity');
-const uPhiCutEnabled = gl.getUniformLocation(prog, 'u_phi_cut_enabled');
-const uPhiCutStart = gl.getUniformLocation(prog, 'u_phi_cut_start');
-const uPhiCutWidth = gl.getUniformLocation(prog, 'u_phi_cut_width');
+const clipLoc = clipLocations(gl, prog);
 let wireBuffers = null;
 
 // --- Depth-correct picking: an offscreen ID buffer -----------------------
@@ -361,17 +361,12 @@ void main() {
   v_vis = a_vis;
   v_pos = a_pos;
 }`);
-const idFs = shader(gl.FRAGMENT_SHADER, `
-precision mediump float;
+const idFs = shader(gl.FRAGMENT_SHADER, CLIP_FRAGMENT_PRECISION + `
 varying vec4 v_id_color; varying float v_vis; varying vec3 v_pos;
-uniform float u_phi_cut_enabled; uniform float u_phi_cut_start; uniform float u_phi_cut_width;
+` + CLIP_GLSL + `
 void main() {
   if (v_vis < 0.5) discard;
-  if (u_phi_cut_enabled > 0.5 && u_phi_cut_width > 0.0) {
-    const float two_pi = 6.28318530718;
-    float relative_phi = mod(atan(v_pos.y, v_pos.x) - u_phi_cut_start + two_pi, two_pi);
-    if (relative_phi <= u_phi_cut_width) discard;
-  }
+  if (clipDiscard(v_pos)) discard;
   gl_FragColor = v_id_color;
 }`);
 const idProg = gl.createProgram(); gl.attachShader(idProg, idVs); gl.attachShader(idProg, idFs); gl.linkProgram(idProg);
@@ -379,9 +374,7 @@ const idLocPos = gl.getAttribLocation(idProg, 'a_pos');
 const idLocVis = gl.getAttribLocation(idProg, 'a_vis');
 const idLocIdColor = gl.getAttribLocation(idProg, 'a_id_color');
 const idUMvp = gl.getUniformLocation(idProg, 'u_mvp');
-const idUPhiCutEnabled = gl.getUniformLocation(idProg, 'u_phi_cut_enabled');
-const idUPhiCutStart = gl.getUniformLocation(idProg, 'u_phi_cut_start');
-const idUPhiCutWidth = gl.getUniformLocation(idProg, 'u_phi_cut_width');
+const idClipLoc = clipLocations(gl, idProg);
 
 // id+1, so a cleared (0,0,0,0) pixel decodes to "no object" (-1).
 const idColors = new Uint8Array(ids.length * 4);
@@ -435,10 +428,7 @@ function pickAt(devX, devY) {
   const eye = [cx + dist*Math.cos(pitch)*Math.sin(yaw), cy + dist*Math.sin(pitch), cz + dist*Math.cos(pitch)*Math.cos(yaw)];
   const mvp = mat4mul(perspective(45*Math.PI/180, canvas.width/canvas.height, radius/500, radius*20), lookAt(eye, [cx,cy,cz], cameraUp));
   gl.uniformMatrix4fv(idUMvp, false, mvp);
-  const phiCut = phiCutRadians();
-  gl.uniform1f(idUPhiCutEnabled, phiCut.enabled ? 1 : 0);
-  gl.uniform1f(idUPhiCutStart, phiCut.start);
-  gl.uniform1f(idUPhiCutWidth, phiCut.width);
+  uploadClip(gl, idClipLoc, clipData);
   setAttrib(idLocPos, surfacePosBuf, 3);
   setAttrib(idLocVis, visibleBuf, 1);
   setAttrib(idLocIdColor, idColorBuf, 4, gl.UNSIGNED_BYTE, true);
@@ -505,13 +495,6 @@ function clearCanvas() {
   if (themeIsDark()) gl.clearColor(0.031,0.067,0.122,1);
   else gl.clearColor(0.985,0.99,1,1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-}
-function phiCutRadians() {
-  return {
-    enabled: document.getElementById('phiCutEnabled').checked,
-    start: +document.getElementById('phiCutStart').value * Math.PI / 180,
-    width: +document.getElementById('phiCutWidth').value * Math.PI / 180,
-  };
 }
 function updateAxisLabels(mvp, enabled) {
   const endpoints = [
@@ -610,10 +593,7 @@ function render() {
   setAttrib(locVis, visibleBuf, 1);
   setAttrib(locHighlight, highlightBuf, 1);
   gl.uniform1f(uOpacity, +document.getElementById('opacity').value/100);
-  const phiCut = phiCutRadians();
-  gl.uniform1f(uPhiCutEnabled, phiCut.enabled ? 1 : 0);
-  gl.uniform1f(uPhiCutStart, phiCut.start);
-  gl.uniform1f(uPhiCutWidth, phiCut.width);
+  uploadClip(gl, clipLoc, clipData);
   gl.drawArrays(gl.TRIANGLES, 0, positions.length/3);
   if (document.getElementById('wireframe').checked) {
     const wire = buildWireBuffers();
@@ -631,7 +611,7 @@ function render() {
     setAttrib(locVis, axisVisBuf, 1);
     setAttrib(locHighlight, axisHighlightBuf, 1);
     gl.uniform1f(uOpacity, 1.0);
-    gl.uniform1f(uPhiCutEnabled, 0.0);
+    uploadClip(gl, clipLoc, null);
     gl.drawArrays(gl.LINES, 0, axisPositions.length/3);
   }
   updateAxisLabels(mvp, axesEnabled);
@@ -659,9 +639,6 @@ document.getElementById('viewXZPos').onclick = () => setCamera(0, Math.PI/2, [0,
 document.getElementById('viewXZNeg').onclick = () => setCamera(0, -Math.PI/2, [0,0,1]);
 document.getElementById('viewYZPos').onclick = () => setCamera(Math.PI/2, 0, [0,0,1]);
 document.getElementById('viewYZNeg').onclick = () => setCamera(-Math.PI/2, 0, [0,0,1]);
-['phiCutStart','phiCutWidth'].forEach(id => document.getElementById(id).addEventListener('input', () => {
-  document.getElementById(id + 'Value').textContent = document.getElementById(id).value + '°';
-}));
 document.getElementById('wireframe').addEventListener('change', () => { if (document.getElementById('wireframe').checked) buildWireBuffers(); });
 document.getElementById('darkMode').addEventListener('change', e => {
   document.body.classList.toggle('dark', e.target.checked);

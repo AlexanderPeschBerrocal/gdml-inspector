@@ -14,10 +14,11 @@ import pytest
 
 from gdml_inspector import cli
 
+from .browser_helpers import VIEWPORT, next_frames, set_range
+
 pytestmark = pytest.mark.usefixtures("webgl_renderer")
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "detector.gdml"
-VIEWPORT = {"width": 1280, "height": 800}
 
 
 @pytest.fixture(scope="module")
@@ -42,16 +43,6 @@ def lazy_dir(lazy_template, tmp_path):
     directory = tmp_path / "lazy"
     shutil.copytree(lazy_template, directory)
     return directory
-
-
-def next_frames(page, count=2):
-    page.evaluate(
-        """(count) => new Promise(resolve => {
-          const step = left => left ? requestAnimationFrame(() => step(left - 1)) : resolve();
-          step(count);
-        })""",
-        count,
-    )
 
 
 def open_standalone(watched, html):
@@ -90,14 +81,6 @@ def chunk_state(page, key):
     )
 
 
-def set_range(page, selector, value):
-    page.eval_on_selector(
-        selector,
-        "(el, v) => { el.value = v; el.dispatchEvent(new Event('input', {bubbles: true})); }",
-        str(value),
-    )
-
-
 # --- Standalone --------------------------------------------------------------
 
 
@@ -132,11 +115,11 @@ def test_standalone_display_controls(watched_page, standalone_html):
     )
     page.check("#darkMode")
     assert page.evaluate("document.body.classList.contains('dark')") is True
-    page.check("#phiCutEnabled")
-    set_range(page, "#phiCutStart", -90)
-    set_range(page, "#phiCutWidth", 120)
-    assert page.inner_text("#phiCutStartValue") == "-90°"
-    assert page.inner_text("#phiCutWidthValue") == "120°"
+    page.check("#clipPhiEnabled")
+    set_range(page, "#clipPhiStart", -90)
+    set_range(page, "#clipPhiWidth", 120)
+    assert page.input_value("#clipPhiStartNumber") == "-90"
+    assert page.input_value("#clipPhiWidthNumber") == "120"
     next_frames(page)
     assert page.evaluate("gl.getError()") == 0
     watched_page.assert_clean()
@@ -277,12 +260,12 @@ def test_lazy_view_and_cut_controls(watched_page, served, lazy_dir):
     page.click("#resetView")
     assert page.evaluate("[yaw, pitch]") == [-0.65, 0.45]
     set_range(page, "#opacity", 40)
-    page.check("#cutEnabled")
-    page.select_option("#cutMode", "keep")
-    set_range(page, "#cutStart", 45)
-    set_range(page, "#cutWidth", 200)
-    assert page.inner_text("#cutStartValue") == "45°"
-    assert page.inner_text("#cutWidthValue") == "200°"
+    page.check("#clipPhiEnabled")
+    page.select_option("#clipPhiMode", "keep")
+    set_range(page, "#clipPhiStart", 45)
+    set_range(page, "#clipPhiWidth", 200)
+    assert page.input_value("#clipPhiStartNumber") == "45"
+    assert page.input_value("#clipPhiWidthNumber") == "200"
     page.uncheck("#coordinateAxes")
     page.click("#loadAll")
     page.wait_for_function(
@@ -366,9 +349,9 @@ def test_standalone_overview_and_cutaway_screenshots(watched_page, standalone_ht
     next_frames(page)
     overview = screenshot_dir() / "standalone-overview.png"
     page.screenshot(path=overview)
-    page.check("#phiCutEnabled")
-    set_range(page, "#phiCutStart", -45)
-    set_range(page, "#phiCutWidth", 90)
+    page.check("#clipPhiEnabled")
+    set_range(page, "#clipPhiStart", -45)
+    set_range(page, "#clipPhiWidth", 90)
     next_frames(page)
     cutaway = screenshot_dir() / "standalone-cutaway.png"
     page.screenshot(path=cutaway)
@@ -388,9 +371,9 @@ def test_lazy_overview_and_cutaway_screenshots(watched_page, served, lazy_dir):
     page.wait_for_function("!renderPending")
     overview = screenshot_dir() / "lazy-overview.png"
     page.screenshot(path=overview)
-    page.check("#cutEnabled")
-    set_range(page, "#cutStart", -45)
-    set_range(page, "#cutWidth", 90)
+    page.check("#clipPhiEnabled")
+    set_range(page, "#clipPhiStart", -45)
+    set_range(page, "#clipPhiWidth", 90)
     page.wait_for_function("!renderPending")
     cutaway = screenshot_dir() / "lazy-cutaway.png"
     page.screenshot(path=cutaway)

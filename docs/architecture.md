@@ -68,6 +68,20 @@ embedded in the output HTML as separate, top-level JSON values
 (`const HIERARCHY`, `const SOLIDS`) alongside `const SCENE`, rather than as
 new keys on the existing scene dict, so that dict's shape stays unaffected.
 
+Clipping (phi wedge plus x/y/z planes, slabs and an arbitrary plane) has a
+single definition, `assets/clipping.js`, injected into both HTML templates at
+build time through a `__CLIPPING_JS__` token (inside the existing single
+script, so the manifest/scene markers other code searches for are unaffected,
+and replaced before any GDML-derived JSON is inserted so a GDML name can never
+be mistaken for a token). It owns the serialisable state schema and its
+`sanitizeClipState()`, the kept-region semantics, the GLSL `clipDiscard()`
+that every fragment shader calls (main, wireframe and highlight, and the
+picking ID pass in standalone; the one surface shader in lazy), the packed
+uniform data shared by the GPU path and a pure-JS reference `clipKeeps()`,
+and the control panel itself, so both viewers show identical controls and
+cannot drift apart. `getClipState()`/`setClipState()` are the hooks a future
+saved-view feature (issue #10) can use.
+
 The standalone viewer's object picking (`assets/standalone.html`) uses a
 WebGL1 ID buffer rather than vertex sampling: every triangle's object id is
 encoded as a colour and drawn, once per click, into an offscreen
@@ -75,8 +89,9 @@ framebuffer with depth testing enabled (the main pass runs with depth
 testing disabled, for its own unrelated translucency/draw-order reasons),
 then read back at the exact clicked pixel. This is pixel-exact and
 depth-correct, and reuses the existing per-vertex visibility buffer and
-phi-cut uniforms so hidden/filtered/clipped surfaces are unpickable and
-don't block picking of what's behind them, for free. A persistent
+clipping uniforms (the shared `clipDiscard()` below) so hidden/filtered/
+clipped surfaces are unpickable and don't block picking of what's behind
+them, for free. A persistent
 `selectedObjectId` drives both a highlight tint (a new `a_highlight`
 vertex attribute on the main shader) and the "Picked Object" inspector
 panel, kept in sync with the hierarchy tree's own `selectedPath` in both

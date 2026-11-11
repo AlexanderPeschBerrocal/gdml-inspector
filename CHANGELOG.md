@@ -54,6 +54,16 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Clipping in both viewers: x/y/z clipping planes (a min and a max on one axis
+  make a slab), an arbitrary plane given by normal and offset, transverse/
+  longitudinal/slab presets and reset, alongside the phi wedge. The two
+  viewers now share one definition of the controls, state, kept-region
+  semantics and shader code (`assets/clipping.js`), so identical settings keep
+  the same region; the standalone viewer gains keep/remove wedge mode and the
+  lazy viewer gains numeric entry. Slider and numeric entry stay in sync,
+  positions are in mm, and the state is serialisable for saved views. Clipping
+  applies identically to surfaces, wireframe, highlighting and picking. Cuts
+  are open (not capped) and the UI says so; see `docs/limitations.md`.
 - A structured, filterable diagnostics panel in both viewers, replacing
   the older flat warnings-text dump: filter by severity and category, and
   download the full structured report as JSON directly from the viewer.

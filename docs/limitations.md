@@ -160,6 +160,34 @@ suite is not a claim that those gaps have been fixed.
   free-text filters; there is no clipping filter yet for it to cooperate
   with (see the roadmap for `#5`).
 
+## Clipping (both viewers)
+
+- One shared definition (`assets/clipping.js`) drives both viewers, so the same
+  settings keep the same region in standalone and lazy exports. Positions are
+  global coordinates in mm, the normalised geometry unit.
+- Phi wedge: global azimuth `atan2(y, x)` in `[start, start + width]`,
+  counter-clockwise about +z, bounds inclusive, wrapping across +-180 degrees;
+  `remove` drops the wedge, `keep` keeps only it. Width is 1-359 degrees.
+- Planes: `x/y/z >=` keeps the coordinate above the value and `x/y/z <=` below
+  it (a pair is a slab); the arbitrary plane keeps `n.p >= offset` with `n`
+  normalised (a zero normal is ignored). **The kept region is the intersection
+  of the phi condition and every enabled plane.**
+- **Cuts are open, not capped.** Clipping discards fragments of the surface
+  mesh; nothing fills the cut, so a cut view shows surfaces only and is not a
+  quantitative solid section. The panel says so.
+- Clipping applies to filled surfaces, the wireframe overlay, selection
+  highlighting and picking alike (standalone; lazy has none of the last
+  three). The coordinate axes are never clipped.
+- No visible plane gizmo (the issue marked it optional) and no saved-view UI
+  yet: the state is serialisable (`getClipState()`/`setClipState()`) for issue
+  #10 to use.
+- Fragment precision is `highp` where the GPU provides it; on a GPU that only
+  has 16-bit `mediump`, plane edges can wobble by a fraction of a millimetre at
+  detector scale.
+- The two exporters still default to different tessellation quality (`--lazy`
+  to `fast`, standalone to `medium`), so the same circles are drawn as
+  different polygons; pass the same `--quality` to compare them exactly.
+
 ## Object picking and the placement inspector (standalone viewer)
 
 - Available in the standalone viewer only, same reasoning as the hierarchy
