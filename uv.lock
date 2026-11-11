@@ -918,6 +918,10 @@ pyg4ometry = [
 ]
 
 [package.dev-dependencies]
+browser = [
+    { name = "playwright" },
+    { name = "pytest-playwright" },
+]
 build = [
     { name = "build" },
     { name = "setuptools" },
@@ -955,10 +959,8 @@ release = [
 test = [
     { name = "hypothesis", version = "6.168.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "hypothesis", version = "6.170.15", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-cov" },
-    { name = "pytest-playwright" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 typing = [
@@ -972,6 +974,10 @@ requires-dist = [{ name = "pyg4ometry", marker = "extra == 'pyg4ometry'" }]
 provides-extras = ["pyg4ometry"]
 
 [package.metadata.requires-dev]
+browser = [
+    { name = "playwright", specifier = ">=1.47,<2" },
+    { name = "pytest-playwright", specifier = ">=0.5,<1" },
+]
 build = [
     { name = "build", specifier = ">=1.2" },
     { name = "setuptools", specifier = "==84.2.1" },
@@ -1002,10 +1008,8 @@ lint = [{ name = "ruff", specifier = "==0.16.5" }]
 release = [{ name = "bump-my-version", specifier = "==1.6.1" }]
 test = [
     { name = "hypothesis", specifier = ">=6,<7" },
-    { name = "playwright", specifier = ">=1.47,<2" },
     { name = "pytest", specifier = ">=8,<10" },
     { name = "pytest-cov", specifier = ">=6,<8" },
-    { name = "pytest-playwright", specifier = ">=0.5,<1" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
 ]
 typing = [

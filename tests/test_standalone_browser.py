@@ -109,7 +109,6 @@ def test_repeated_logical_volume_renders_two_independent_rows(opened):
     checkbox_a = rows["world/pixel_a"].query_selector("input[type=checkbox]")
     checkbox_b = rows["world/pixel_b"].query_selector("input[type=checkbox]")
     checkbox_a.click()
-    page.wait_for_timeout(50)
     assert checkbox_a.is_checked() is False
     assert checkbox_b.is_checked() is True
 
@@ -120,11 +119,9 @@ def test_expand_collapse_materialises_and_removes_child_rows(opened):
     toggle = rows["world/group"].query_selector(".tree-toggle")
     assert row_path_present(page, "world/group/inner") is False
     toggle.click()
-    page.wait_for_timeout(50)
     assert row_path_present(page, "world/group/inner") is True
     toggle = page.query_selector('[data-path="world/group"] .tree-toggle')
     toggle.click()
-    page.wait_for_timeout(50)
     assert row_path_present(page, "world/group/inner") is False
 
 
@@ -161,7 +158,6 @@ def test_hide_checkbox_updates_object_visibility(opened):
     page, _errors = opened
     checkbox = page.query_selector('[data-path="world/pixel_a"] input[type=checkbox]')
     checkbox.click()
-    page.wait_for_timeout(50)
     pixel_a_id = page.evaluate("SCENE.objects.find(o => o.path === 'world/pixel_a').id")
     assert page.evaluate(f"objectVisible[{pixel_a_id}]") == 0
     pixel_b_id = page.evaluate("SCENE.objects.find(o => o.path === 'world/pixel_b').id")
@@ -172,14 +168,12 @@ def test_isolate_restricts_visibility_to_the_selected_subtree(opened):
     page, _errors = opened
     isolate_btn = page.query_selector('[data-path="world/pixel_a"] .tree-action-btn')
     isolate_btn.click()
-    page.wait_for_timeout(50)
     pixel_a_id = page.evaluate("SCENE.objects.find(o => o.path === 'world/pixel_a').id")
     pixel_b_id = page.evaluate("SCENE.objects.find(o => o.path === 'world/pixel_b').id")
     assert page.evaluate(f"objectVisible[{pixel_a_id}]") == 1
     assert page.evaluate(f"objectVisible[{pixel_b_id}]") == 0
     assert page.is_visible("#hierarchyClearIsolation")
     page.click("#hierarchyClearIsolation")
-    page.wait_for_timeout(50)
     assert page.evaluate(f"objectVisible[{pixel_b_id}]") == 1
 
 
@@ -189,7 +183,6 @@ def test_focus_action_recenters_and_zooms_the_camera(opened):
     buttons = page.query_selector_all('[data-path="world/pixel_a"] .tree-action-btn')
     focus_btn = buttons[1]
     focus_btn.click()
-    page.wait_for_timeout(50)
     dist_after = page.evaluate("dist")
     assert dist_after < dist_before
 
@@ -202,7 +195,6 @@ def test_focus_on_empty_container_falls_back_to_an_ancestor_bbox(opened):
     radius = page.evaluate("radius")
     focus_btn = page.query_selector_all('[data-path="world/empty"] .tree-action-btn')[1]
     focus_btn.click()
-    page.wait_for_timeout(50)
     assert errors == []
     assert page.evaluate("dist") > 0
     assert page.evaluate("radius") == radius  # the global bbox is untouched
@@ -211,14 +203,12 @@ def test_focus_on_empty_container_falls_back_to_an_ancestor_bbox(opened):
 def test_search_expands_ancestors_and_marks_matches(opened):
     page, _errors = opened
     page.fill("#hierarchySearch", "child")
-    page.wait_for_timeout(50)
     assert row_path_present(page, "world/group/inner") is True
     match = page.query_selector('[data-path="world/group/inner"]')
     assert "tree-match" in match.get_attribute("class")
     other = page.query_selector('[data-path="world/pixel_a"]')
     assert "tree-dim" in other.get_attribute("class")
     page.fill("#hierarchySearch", "")
-    page.wait_for_timeout(50)
 
 
 def test_keyboard_navigation_moves_focus_and_toggles_visibility(opened):
@@ -226,11 +216,9 @@ def test_keyboard_navigation_moves_focus_and_toggles_visibility(opened):
     root = page.query_selector('[data-path="world"]')
     root.click()
     page.keyboard.press("ArrowDown")
-    page.wait_for_timeout(50)
     focused_path = page.evaluate("document.activeElement.dataset.path")
     assert focused_path == "world/pixel_a"
     page.keyboard.press("Enter")
-    page.wait_for_timeout(50)
     pixel_a_id = page.evaluate("SCENE.objects.find(o => o.path === 'world/pixel_a').id")
     assert page.evaluate(f"objectVisible[{pixel_a_id}]") == 0
 
@@ -238,9 +226,7 @@ def test_keyboard_navigation_moves_focus_and_toggles_visibility(opened):
 def test_picking_an_object_reveals_it_in_the_hierarchy(opened):
     page, _errors = opened
     page.query_selector('[data-path="world/group"] .tree-toggle').click()
-    page.wait_for_timeout(50)
     page.evaluate("revealInHierarchy('world/group/inner')")
-    page.wait_for_timeout(50)
     row = page.query_selector('[data-path="world/group/inner"]')
     assert "tree-selected" in row.get_attribute("class")
 
@@ -248,9 +234,7 @@ def test_picking_an_object_reveals_it_in_the_hierarchy(opened):
 def test_clicking_a_box_selects_it_and_populates_the_inspector(opened):
     page, errors = opened
     page.click("#viewXYPos")
-    page.wait_for_timeout(50)
     click_object_center(page, "world/pixel_a")
-    page.wait_for_timeout(100)
     assert page.evaluate("selectedPath") == "world/pixel_a"
     pixel_a_id = page.evaluate("SCENE.objects.find(o => o.path === 'world/pixel_a').id")
     assert page.evaluate("selectedObjectId") == pixel_a_id
@@ -273,9 +257,7 @@ def test_picking_is_depth_correct_through_occluding_geometry(opened):
     # vertex-sampling picking could get wrong.
     page, errors = opened
     page.click("#viewXYPos")
-    page.wait_for_timeout(50)
     click_world_point(page, [0, 0, 100])
-    page.wait_for_timeout(100)
     assert page.evaluate("selectedPath") == "world/front"
     assert errors == []
 
@@ -283,11 +265,8 @@ def test_picking_is_depth_correct_through_occluding_geometry(opened):
 def test_hidden_object_is_not_pickable_and_does_not_block_what_is_behind_it(opened):
     page, errors = opened
     page.click("#viewXYPos")
-    page.wait_for_timeout(50)
     page.query_selector('[data-path="world/front"] input[type=checkbox]').click()
-    page.wait_for_timeout(50)
     click_world_point(page, [0, 0, 100])
-    page.wait_for_timeout(100)
     # The front box is hidden, so the click passes through to the back one.
     assert page.evaluate("selectedPath") == "world/back"
     assert errors == []
@@ -296,9 +275,7 @@ def test_hidden_object_is_not_pickable_and_does_not_block_what_is_behind_it(open
 def test_clicking_empty_space_clears_the_selection(opened):
     page, _errors = opened
     page.click("#viewXYPos")
-    page.wait_for_timeout(50)
     click_object_center(page, "world/pixel_a")
-    page.wait_for_timeout(100)
     assert page.evaluate("selectedObjectId") is not None
     rect = page.evaluate(
         "(() => { const r = canvas.getBoundingClientRect(); return [r.left, r.top]; })()"
@@ -306,7 +283,6 @@ def test_clicking_empty_space_clears_the_selection(opened):
     page.mouse.click(
         rect[0] + 5, rect[1] + 5
     )  # a canvas corner, away from all geometry
-    page.wait_for_timeout(100)
     assert page.evaluate("selectedObjectId") is None
     assert page.eval_on_selector("#detailsContent", "el => el.style.display") == "none"
 
@@ -315,7 +291,6 @@ def test_selecting_a_container_tree_node_shows_a_reduced_inspector(opened):
     page, _errors = opened
     row = page.query_selector('[data-path="world/group"]')
     row.click()
-    page.wait_for_timeout(50)
     assert page.evaluate("selectedObjectId") is None
     assert "container" in page.inner_text("#detailMaterial")
     assert page.inner_text("#detailSolidType") == "--"
@@ -324,15 +299,12 @@ def test_selecting_a_container_tree_node_shows_a_reduced_inspector(opened):
 def test_deselecting_when_the_selected_object_is_filtered_out(opened):
     page, _errors = opened
     page.click("#viewXYPos")
-    page.wait_for_timeout(50)
     click_object_center(page, "world/pixel_a")
-    page.wait_for_timeout(100)
     assert page.evaluate("selectedObjectId") is not None
     material = page.evaluate(
         "SCENE.objects.find(o => o.path === 'world/pixel_a').material"
     )
     page.eval_on_selector(f'input[data-material="{material}"]', "el => el.click()")
-    page.wait_for_timeout(100)
     assert page.evaluate("selectedObjectId") is None
     assert page.eval_on_selector("#detailsContent", "el => el.style.display") == "none"
 
@@ -340,23 +312,19 @@ def test_deselecting_when_the_selected_object_is_filtered_out(opened):
 def test_copy_buttons_do_not_throw(opened):
     page, errors = opened
     page.click("#viewXYPos")
-    page.wait_for_timeout(50)
     click_object_center(page, "world/pixel_a")
-    page.wait_for_timeout(100)
     page.click("#detailCopyPath")
     page.click("#detailCopyName")
-    page.wait_for_timeout(50)
     assert errors == []
 
 
 def test_picking_is_correct_after_resize(opened):
     page, _errors = opened
     page.click("#viewXYPos")
-    page.wait_for_timeout(50)
     page.set_viewport_size({"width": 700, "height": 500})
-    page.wait_for_timeout(100)
+    # The render loop resizes the canvas on its next frame; wait for that.
+    page.wait_for_function("canvas.height === 500")
     click_world_point(page, [0, 0, 100])
-    page.wait_for_timeout(100)
     assert page.evaluate("selectedPath") == "world/front"
 
 
@@ -372,9 +340,7 @@ def test_picking_is_correct_at_high_device_pixel_ratio(viewer_path, browser):
     page.goto(viewer_path.resolve().as_uri())
     page.wait_for_selector("#hierarchyTree .tree-row")
     page.click("#viewXYPos")
-    page.wait_for_timeout(50)
     click_world_point(page, [0, 0, 100])
-    page.wait_for_timeout(100)
     assert page.evaluate("window.devicePixelRatio") == 2
     assert page.evaluate("selectedPath") == "world/front"
     assert errors == []

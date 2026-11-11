@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Browser test artifacts (screenshots, traces, logs)
+test-results/

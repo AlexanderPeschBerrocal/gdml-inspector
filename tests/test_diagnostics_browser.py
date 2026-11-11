@@ -77,7 +77,6 @@ def test_severity_and_category_filters_narrow_the_list(opened):
     ) == ["", "reference", "unsupported"]
 
     page.select_option("#diagnosticCategory", "unsupported")
-    page.wait_for_timeout(50)
     assert "Unsupported GDML daughter" in page.inner_text("#warnings")
     assert "Missing volume reference" not in page.inner_text("#warnings")
 
@@ -85,7 +84,6 @@ def test_severity_and_category_filters_narrow_the_list(opened):
     # miss, not a fabricated filter combination.
     page.select_option("#diagnosticSeverity", "warning")
     page.select_option("#diagnosticCategory", "reference")
-    page.wait_for_timeout(50)
     assert page.inner_text("#warnings") == "No diagnostics match this filter."
 
 
@@ -111,7 +109,6 @@ def test_show_in_hierarchy_reveals_the_affected_volume(opened):
     assert len(buttons) == 1
     assert buttons[0].inner_text() == "Show in hierarchy"
     buttons[0].click()
-    page.wait_for_timeout(50)
     assert page.eval_on_selector("#hierarchySearch", "el => el.value") == "leaf"
     matches = page.query_selector_all(".tree-match")
     assert len(matches) == 1
@@ -141,7 +138,6 @@ def test_solid_identified_diagnostic_is_also_linkable_via_search(
     button = page.query_selector(".diagnostic-link")
     assert button is not None
     button.click()
-    page.wait_for_timeout(50)
     assert page.eval_on_selector("#hierarchySearch", "el => el.value") == "carved"
     matches = page.query_selector_all(".tree-match")
     assert len(matches) == 1

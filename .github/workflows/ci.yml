@@ -21,10 +21,11 @@ jobs:
           enable-cache: true
       - name: Verify project metadata and lock agree
         run: uv lock --check
-      - name: Install the locked development environment
-        run: uv sync --locked
-      - name: Install the Playwright browser used by the standalone viewer's tests
-        run: uv run --no-sync playwright install --with-deps chromium
+      - name: Install the locked test environment (no browser tooling)
+        # The browser tests have their own job; without the `browser` group
+        # they are skipped at collection time. release/build are needed by
+        # the release-script and packaging tests.
+        run: uv sync --locked --no-default-groups --group test --group release --group build
       - name: Test with package and branch coverage
         run: uv run --no-sync pytest --cov=gdml_inspector --cov-report=term-missing --cov-report=xml --cov-report=html
       - name: Upload coverage reports
@@ -35,6 +36,46 @@ jobs:
           path: |
             coverage.xml
             htmlcov/
+          if-no-files-found: warn
+          retention-days: 14
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the project uv version
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.6'
+          enable-cache: true
+      - name: Verify project metadata and lock agree
+        run: uv lock --check
+      - name: Install the locked browser-test environment
+        run: uv sync --locked --no-default-groups --group test --group browser
+      - name: Install Chromium
+        run: uv run --no-sync playwright install --with-deps chromium
+      - name: Smoke-test both viewers in a real browser
+        # Headless Chromium falls back to software WebGL on a GPU-less
+        # runner; the suite fails visibly if no WebGL context can be made.
+        run: >-
+          uv run --no-sync pytest tests/test_*browser*.py -v
+          --screenshot only-on-failure --tracing retain-on-failure
+          --output test-results
+      - name: Upload failure screenshots, traces and browser logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-failure-artifacts
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload review screenshots (overview and cutaway, both modes)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: viewer-screenshots
+          path: test-results/screenshots/
           if-no-files-found: warn
           retention-days: 14
 

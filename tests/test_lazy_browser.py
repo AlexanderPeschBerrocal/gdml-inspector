@@ -71,13 +71,11 @@ def test_severity_and_category_filters_narrow_the_list(opened):
     ) == ["", "reference", "unsupported"]
 
     page.select_option("#diagnosticCategory", "unsupported")
-    page.wait_for_timeout(50)
     assert "Unsupported GDML daughter" in page.inner_text("#warnings")
     assert "Missing volume reference" not in page.inner_text("#warnings")
 
     page.select_option("#diagnosticSeverity", "warning")
     page.select_option("#diagnosticCategory", "reference")
-    page.wait_for_timeout(50)
     assert page.inner_text("#warnings") == "No diagnostics match this filter."
 
 
