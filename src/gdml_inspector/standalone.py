@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from . import __version__
 from . import geometry as base
+from ._assets import read_asset
 from .geometry import (
     DIAGNOSTIC_CATEGORIES,
     DIAGNOSTIC_SEVERITIES,
@@ -167,6 +168,9 @@ def write_html(
         files("gdml_inspector.assets")
         .joinpath("standalone.html")
         .read_text(encoding="utf-8")
+        # Static shared code first: GDML-derived JSON inserted afterwards is
+        # never scanned for template tokens.
+        .replace("__CLIPPING_JS__", read_asset("clipping.js"))
         .replace("__TITLE__", title)
         .replace(
             "__SCENE__", json.dumps(scene, separators=(",", ":")).replace("</", "<\\/")

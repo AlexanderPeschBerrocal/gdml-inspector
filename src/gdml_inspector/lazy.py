@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import __version__
 from . import geometry as base
+from ._assets import read_asset
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder
 from .server import serve_file
 
@@ -367,6 +368,9 @@ def write_html(manifest: dict, output: Path) -> None:
         files("gdml_inspector.assets")
         .joinpath("lazy.html")
         .read_text(encoding="utf-8")
+        # Static shared code first: GDML-derived JSON inserted afterwards is
+        # never scanned for template tokens.
+        .replace("__CLIPPING_JS__", read_asset("clipping.js"))
         .replace("__TITLE__", title)
         .replace("__MANIFEST__", manifest_json),
         encoding="utf-8",

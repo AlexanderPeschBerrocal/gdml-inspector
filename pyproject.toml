@@ -74,7 +74,7 @@ gdml-inspector-lazy = "gdml_inspector.cli:lazy_main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"gdml_inspector.assets" = ["*.html"]
+"gdml_inspector.assets" = ["*.html", "*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

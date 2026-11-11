@@ -37,3 +37,17 @@ def test_embedded_gdml_names_cannot_close_script(tmp_path, mode, example_gdml):
     document = output.read_text()
     assert document.count("</script>") == 1
     assert "<\\/script>" in document
+
+
+@pytest.mark.parametrize("mode", [[], ["--lazy"]])
+def test_no_template_token_is_left_unreplaced(tmp_path, mode, example_gdml):
+    import re
+
+    output = tmp_path / "viewer.html"
+    args = [*mode, str(example_gdml), "--backend", "python", "--out", str(output)]
+    assert cli.main(args) == 0
+    document = output.read_text()
+    assert re.findall(r"__[A-Z][A-Z_]*__", document) == []
+    assert "function clipDiscard" not in document  # lives inside a GLSL string
+    assert "bool clipDiscard(vec3 p)" in document
+    assert document.count("</script>") == 1

@@ -41,7 +41,7 @@ uv run --no-sync pytest tests/test_*browser*.py \
 ```
 
 - **What is covered:** both programs' shaders link with no GL error; the
-  camera presets, opacity, wireframe, axes, dark-mode, phi-cut, material and
+  camera presets, opacity, wireframe, axes, dark-mode, clipping, material and
   hierarchy/picking/diagnostics controls (standalone); layer selection fetching
   chunks over real HTTP, unloading, keeping hidden chunks loaded, a reload round
   trip, and deselecting while a chunk is still loading, which must never leave
