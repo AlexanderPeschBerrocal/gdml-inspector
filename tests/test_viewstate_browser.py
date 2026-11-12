@@ -363,7 +363,9 @@ def test_a_standalone_view_applies_only_the_shared_settings_in_lazy(
         report = load_file(page, tmp_path, state)
         assert report["errors"] == []
         assert {"camera", "clipping", "display"} <= set(report["applied"])
-        assert {"filters", "hierarchy"} <= set(report["ignored"])
+        assert "filters" in report["ignored"]
+        assert "hierarchy" not in report["ignored"]  # hide/isolate apply in lazy now
+        assert "hierarchy" in report["applied"]
         assert any("saved from the standalone viewer" in w for w in report["warnings"])
         assert page.evaluate("[yaw, pitch]") == [0.31, 0.12]
         assert (

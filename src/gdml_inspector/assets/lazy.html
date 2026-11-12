@@ -66,6 +66,8 @@ input[type=range] { width: 100%; }
 .tree-muted { color: #8fa6c0; font-size: 11px; }
 .tree-warn { color: #f4a63b; }
 .tree-actions { display: flex; gap: 3px; flex: none; }
+.tree-row.tree-filtered .tree-label { text-decoration: line-through; opacity: 0.65; }
+.tree-row input[type=checkbox] { margin: 0; flex: none; }
 .tree-action-btn { margin: 0; padding: 2px 6px; font-size: 10px; }
 .small-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
 #detailsEmpty { color: #9cafc6; font-size: 12px; }
@@ -119,6 +121,7 @@ input[type=range] { width: 100%; }
   <div class="muted" id="hierarchyNote">The placement tree is loaded on demand (it downloads placements.json) and opens automatically when you pick an object.</div>
   <div class="row"><button id="loadHierarchy" type="button">Load hierarchy</button></div>
   <input id="hierarchySearch" placeholder="Search volume, placement, path..." style="display:none">
+  <div class="row"><button id="hierarchyClearIsolation" type="button" style="display:none">Clear isolation</button></div>
   <div id="hierarchyTree" aria-label="Physical volume hierarchy" style="display:none"></div>
 
   <h2>Picked Object</h2>
@@ -304,8 +307,13 @@ async function loadChunk(chunk) {
       pos:makeBuffer(positions),
       color:makeBuffer(colors),
       id:hasIds ? makeBuffer(new Uint8Array(data,idOff,vertices*4)) : null,
+      vis:null,
+      // A private copy of the ids (4 B/vertex) so hide/isolate can rebuild the
+      // visibility buffer without keeping the whole chunk's bytes alive.
+      ids:hasIds ? new Uint32Array(data.slice(idOff,idOff+vertices*4)) : null,
       count:vertices,
     };
+    uploadVisibility(state.buffers);
     state.loaded=true; state.visible=selectedLayers.has(chunk.baseKey); state.bytes=data.byteLength;
     updateStatus(`Loaded ${chunk.subsystem} / ${chunk.layer}.`, 'loaded');
     refreshInspector();
@@ -323,6 +331,7 @@ function unloadChunk(chunk) {
   if (!state.loaded || !state.buffers) return;
   gl.deleteBuffer(state.buffers.pos); gl.deleteBuffer(state.buffers.color);
   if (state.buffers.id) gl.deleteBuffer(state.buffers.id);
+  if (state.buffers.vis) gl.deleteBuffer(state.buffers.vis);
   state.loaded=false; state.buffers=null; state.bytes=0;
   refreshInspector();
 }
@@ -346,20 +355,21 @@ function shader(type, source) {
   return value;
 }
 const vertexShader=shader(gl.VERTEX_SHADER, `
-attribute vec3 a_pos; attribute vec4 a_color; attribute vec4 a_id;
-uniform mat4 u_mvp; uniform float u_selected; varying vec4 v_color; varying vec3 v_world; varying float v_highlight;
+attribute vec3 a_pos; attribute vec4 a_color; attribute vec4 a_id; attribute float a_vis;
+uniform mat4 u_mvp; uniform float u_selected; varying vec4 v_color; varying vec3 v_world; varying float v_highlight; varying float v_vis;
 void main() {
-  v_world=a_pos; v_color=a_color; gl_Position=u_mvp*vec4(a_pos,1.0);
+  v_vis=a_vis; v_world=a_pos; v_color=a_color; gl_Position=u_mvp*vec4(a_pos,1.0);
   // a_id holds objectId+1 as little-endian bytes (0 = no object); u_selected uses the same encoding.
   float encoded=floor(a_id.r*255.0+0.5)+256.0*floor(a_id.g*255.0+0.5)+65536.0*floor(a_id.b*255.0+0.5);
   v_highlight=(u_selected>0.5 && abs(encoded-u_selected)<0.5) ? 1.0 : 0.0;
 }
 `);
 const fragmentShader=shader(gl.FRAGMENT_SHADER, CLIP_FRAGMENT_PRECISION + `
-varying vec4 v_color; varying vec3 v_world; varying float v_highlight;
+varying vec4 v_color; varying vec3 v_world; varying float v_highlight; varying float v_vis;
 uniform float u_opacity;
 ` + CLIP_GLSL + `
 void main() {
+  if (v_vis<0.5) discard;
   if (clipDiscard(v_world)) discard;
   gl_FragColor=vec4(mix(v_color.rgb,vec3(1.0,0.82,0.2),0.5*v_highlight),v_color.a*u_opacity);
 }
@@ -367,7 +377,7 @@ void main() {
 const program=gl.createProgram(); gl.attachShader(program,vertexShader); gl.attachShader(program,fragmentShader); gl.linkProgram(program);
 if (!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
 const locations={
-  pos:gl.getAttribLocation(program,'a_pos'), color:gl.getAttribLocation(program,'a_color'), id:gl.getAttribLocation(program,'a_id'),
+  pos:gl.getAttribLocation(program,'a_pos'), color:gl.getAttribLocation(program,'a_color'), id:gl.getAttribLocation(program,'a_id'), vis:gl.getAttribLocation(program,'a_vis'),
   selected:gl.getUniformLocation(program,'u_selected'),
   mvp:gl.getUniformLocation(program,'u_mvp'), opacity:gl.getUniformLocation(program,'u_opacity'),
 };
@@ -438,6 +448,7 @@ function render() {
     gl.bindBuffer(gl.ARRAY_BUFFER,state.buffers.pos); gl.enableVertexAttribArray(locations.pos); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
     gl.bindBuffer(gl.ARRAY_BUFFER,state.buffers.color); gl.enableVertexAttribArray(locations.color); gl.vertexAttribPointer(locations.color,4,gl.UNSIGNED_BYTE,true,0,0);
     bindIdAttribute(gl,locations.id,state.buffers.id);
+    bindVisibilityAttribute(gl,locations.vis,state.buffers.vis);
     gl.drawArrays(gl.TRIANGLES,0,state.buffers.count);
   }
   const axesEnabled=document.getElementById('coordinateAxes').checked;
@@ -449,6 +460,7 @@ function render() {
     gl.bindBuffer(gl.ARRAY_BUFFER,axisPosBuffer); gl.enableVertexAttribArray(locations.pos); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
     gl.bindBuffer(gl.ARRAY_BUFFER,axisColorBuffer); gl.enableVertexAttribArray(locations.color); gl.vertexAttribPointer(locations.color,4,gl.UNSIGNED_BYTE,true,0,0);
     bindIdAttribute(gl,locations.id,null);
+    bindVisibilityAttribute(gl,locations.vis,null);
     gl.drawArrays(gl.LINES,0,6);
   }
   updateAxisLabels(mvp,axesEnabled);
@@ -485,7 +497,7 @@ function renderMaterials() {
 // object even when its neighbours are unloaded. Everything else about a
 // placement (path, material, solid, transforms) comes from placements.json,
 // fetched and digest-checked on first use rather than at page load.
-const picker = createPicker(gl);
+const picker = createPicker(gl, {visibility: true});
 const approximatedSolids = new Set(MANIFEST.diagnostics.filter(d => d.category === 'unsupported').map(d => d.identifier));
 const pickingSupported = Boolean(MANIFEST.placements) && (MANIFEST.chunkFormat || 1) >= 2;
 const inspector = buildInspector(document.getElementById('details'), {
@@ -564,11 +576,55 @@ async function selectPath(path) {
   return true;
 }
 
+// --- Hide / isolate (per-vertex visibility) ---
+// Hiding is by object id, applied as one byte per vertex built from the chunk's
+// ids, so it covers whole subtrees of a loaded layer and survives unload and
+// reload. It affects drawing and picking alike. Objects of v1 chunks (no ids)
+// cannot be hidden individually.
+const hierarchyHidden = new Set();
+let isolatedPath = null;
+let visibleMask = null; // Uint8Array over object ids, once placements are known
+function uploadVisibility(buffers) {
+  if (!buffers.ids) return; // constant "visible"
+  const vis = new Uint8Array(buffers.count);
+  for (let i = 0; i < vis.length; i++) {
+    const encoded = buffers.ids[i];
+    vis[i] = (encoded === 0 || !visibleMask || visibleMask[encoded - 1]) ? 1 : 0;
+  }
+  if (!buffers.vis) buffers.vis = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vis);
+  gl.bufferData(gl.ARRAY_BUFFER, vis, gl.DYNAMIC_DRAW);
+}
+function recomputeVisibility() {
+  if (!placements) return;
+  const objects = placements.objects;
+  if (!visibleMask || visibleMask.length !== objects.length) visibleMask = new Uint8Array(objects.length);
+  for (let id = 0; id < objects.length; id++) {
+    visibleMask[id] = (!hierarchyHidden.has(id)
+      && (isolatedPath === null || pathIsDescendantOrSelf(objects[id].path, isolatedPath))) ? 1 : 0;
+  }
+  for (const state of Object.values(states)) if (state.buffers) uploadVisibility(state.buffers);
+  if (selectedObjectId !== null && !visibleMask[selectedObjectId]) clearSelection();
+  if (hierarchyTree) hierarchyTree.refreshStates();
+  requestRender();
+}
+function setSubtreeHidden(path, hidden) {
+  for (const id of hierarchyTree.subtreeObjectIds(path)) {
+    if (hidden) hierarchyHidden.add(id); else hierarchyHidden.delete(id);
+  }
+  recomputeVisibility();
+}
+function toggleIsolate(path) {
+  isolatedPath = isolatedPath === path ? null : path;
+  recomputeVisibility();
+}
+document.getElementById('hierarchyClearIsolation').onclick = () => { isolatedPath = null; recomputeVisibility(); };
+
 // --- Hierarchy tree (see assets/tree.js) ---
 // Built from the placement nodes in placements.json, so it lists every
 // placement whether or not its layer is loaded. Row clicks select a placement
-// (highlighted when its geometry is shown). There is no hide/isolate here yet:
-// that needs a per-vertex visibility buffer.
+// (highlighted when its geometry is shown); the checkbox hides a subtree and
+// Isolate shows only one.
 let hierarchyTree = null;
 function ensureTree(loaded) {
   if (hierarchyTree) return hierarchyTree;
@@ -582,7 +638,15 @@ function ensureTree(loaded) {
       selectedObjectId = node.objectId !== undefined ? node.objectId : null;
       refreshInspector(); requestRender();
     },
-    actions: [{label: 'Focus', onClick: path => focusOnPath(path)}],
+    checkbox: {onChange: (path, checked) => setSubtreeHidden(path, !checked)},
+    actions: [
+      {label: 'Isolate', onClick: path => toggleIsolate(path)},
+      {label: 'Focus', onClick: path => focusOnPath(path)},
+    ],
+    decorateRow: visibilityDecorator(() => hierarchyTree, hierarchyHidden, () => isolatedPath, id => !visibleMask || visibleMask[id] === 1),
+    afterRefresh: () => {
+      document.getElementById('hierarchyClearIsolation').style.display = isolatedPath !== null ? '' : 'none';
+    },
     labelExtra: node => {
       const object = node.rendered && node.objectId !== undefined ? loaded.objects[node.objectId] : null;
       return object && approximatedSolids.has(object.solid) ? ' <span class="tree-warn" title="Approximated geometry">⚠</span>' : '';
@@ -593,6 +657,7 @@ function ensureTree(loaded) {
   document.getElementById('loadHierarchy').style.display = 'none';
   document.getElementById('hierarchyNote').style.display = 'none';
   hierarchyTree.render();
+  recomputeVisibility();
   return hierarchyTree;
 }
 document.getElementById('loadHierarchy').onclick = async () => {
@@ -631,6 +696,7 @@ function pickAt(devX, devY) {
         gl.enableVertexAttribArray(locs.pos);
         gl.vertexAttribPointer(locs.pos, 3, gl.FLOAT, false, 0, 0);
         bindIdAttribute(gl, locs.idColor, state.buffers.id);
+        bindVisibilityAttribute(gl, locs.vis, state.buffers.vis);
         gl.drawArrays(gl.TRIANGLES, 0, state.buffers.count);
       }
     },
@@ -666,8 +732,13 @@ function captureViewSections() {
       releaseHidden: document.getElementById('releaseHidden').checked,
     },
     clipping: getClipState(),
-    // No hide/isolate in the lazy tree: only expansion and the selection are saved.
-    hierarchy: {hiddenPaths: [], expandedPaths: hierarchyTree ? [...hierarchyTree.expandedPaths].sort() : [], isolatedPath: null, selectedPath, search: ''},
+    hierarchy: {
+      hiddenPaths: placements ? [...hierarchyHidden].map(id => placements.objects[id].path).sort() : [],
+      expandedPaths: hierarchyTree ? [...hierarchyTree.expandedPaths].sort() : [],
+      isolatedPath,
+      selectedPath,
+      search: document.getElementById('hierarchySearch').value,
+    },
     layers: {
       selected: [...selectedLayers].sort().map(key => {
         const [subsystem, layer] = key.split('\x1f');
@@ -680,7 +751,6 @@ async function applyViewSections(state, report) {
   const input = document.getElementById.bind(document);
   const fire = (id, type) => input(id).dispatchEvent(new Event(type, {bubbles: true}));
   if (state.filters) report.ignored.push('filters');
-  if (state.hierarchy && (state.hierarchy.hiddenPaths.length || state.hierarchy.isolatedPath !== null)) report.ignored.push('hierarchy');  // hide/isolate; expansion and selection are applied below
   if (state.display) {
     const d = state.display;
     if (d.opacity !== undefined) { input('opacity').value = d.opacity; fire('opacity', 'input'); }
@@ -709,16 +779,37 @@ async function applyViewSections(state, report) {
     }
     report.applied.push('layers');
   }
-  if (state.hierarchy && pickingSupported && state.hierarchy.expandedPaths.length) {
+  if (state.hierarchy && !pickingSupported) {
+    const h = state.hierarchy;
+    if (h.hiddenPaths.length || h.isolatedPath !== null || h.expandedPaths.length) report.ignored.push('hierarchy');
+  } else if (state.hierarchy && (state.hierarchy.hiddenPaths.length || state.hierarchy.expandedPaths.length
+      || state.hierarchy.isolatedPath !== null || state.hierarchy.search)) {
+    // Nothing to apply (a view saved before the tree was opened) leaves the tree closed.
+    const h = state.hierarchy;
     const loaded = await ensurePlacements();
     if (loaded) {
       const tree = ensureTree(loaded);
-      for (const path of state.hierarchy.expandedPaths) {
+      const idsByPath = new Map(loaded.objects.map(o => [o.path, o.id]));
+      hierarchyHidden.clear();
+      for (const path of h.hiddenPaths) {
+        if (idsByPath.has(path)) hierarchyHidden.add(idsByPath.get(path));
+        else report.unknown.push({kind: 'hidden placement', value: path});
+      }
+      if (h.isolatedPath !== null && !loaded.nodeByPath[h.isolatedPath]) {
+        report.unknown.push({kind: 'isolated placement', value: h.isolatedPath});
+        isolatedPath = null;
+      } else isolatedPath = h.isolatedPath;
+      tree.expandedPaths.clear();
+      tree.expandedPaths.add(loaded.nodes[0].path); // the world stays open
+      for (const path of h.expandedPaths) {
         if (loaded.nodeByPath[path]) tree.expandedPaths.add(path);
         else report.unknown.push({kind: 'expanded placement', value: path});
       }
+      document.getElementById('hierarchySearch').value = h.search;
       tree.render();
-      report.applied.push('hierarchy tree');
+      recomputeVisibility();
+      if (h.search) tree.search(h.search);
+      report.applied.push('hierarchy');
     }
   }
   if (state.hierarchy) {

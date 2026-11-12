@@ -62,7 +62,7 @@ destination. `python -m gdml_inspector` supports the same options as the main CL
 | Material toggles, name/metadata search, solid-type filtering | Yes | Material legend only |
 | Depth-correct click picking, highlight and placement inspector | Yes | Yes (needs a v2 export) |
 | Wireframe overlay and light/dark theme | Yes | Not yet |
-| Physical-volume hierarchy tree with search and focus | Yes (hide/isolate too) | Yes (needs a v2 export; no hide/isolate) |
+| Physical-volume hierarchy tree with search and focus | Yes (hide/isolate too) | Yes, hide/isolate too (needs a v2 export) |
 | Subsystem/layer toggles and unloading hidden geometry | Not applicable | Yes |
 | Structured diagnostics (code, severity, category, construct, backend) | Yes | Yes |
 

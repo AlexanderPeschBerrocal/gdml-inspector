@@ -154,10 +154,15 @@ suite is not a claim that those gaps have been fixed.
   Row click selects (with the inspector, and a highlight when the geometry is
   shown), Focus frames the subtree, and search covers names, paths and solid
   refs.
-- **Lazy has no hide/isolate or per-row checkboxes yet.** Hiding part of a
-  loaded layer needs a per-vertex visibility buffer, which is not built; a
-  standalone saved view's hidden/isolated placements are reported as not
-  applicable in the lazy viewer. Tree expansion and selection do round-trip.
+- **Hide and isolate work in lazy too**, per placement or subtree, through a
+  per-vertex visibility buffer built from the chunk ids. It applies to drawing
+  and picking alike, survives unloading and reloading a layer, applies to a
+  layer loaded later, and hiding the selection clears it. Costs: a private copy
+  of each loaded chunk's ids (4 B/vertex of browser memory) plus 1 B/vertex on
+  the GPU; recomputing after a change took about 30 ms for 4.4 million
+  vertices. Chunks from a v1 export have no ids, so nothing in them can be
+  hidden (the hierarchy is unavailable for such exports anyway). Hidden and
+  isolated placements save by path and carry across viewers.
 - A flat world is a flat tree: the real COCOA geometry has about 7,200
   placements directly under the world, so expanding it renders that many rows
   (about 0.7 s here). There is no virtualised scrolling.

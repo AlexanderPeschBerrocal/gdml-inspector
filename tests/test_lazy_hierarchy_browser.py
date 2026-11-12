@@ -137,8 +137,10 @@ def test_keyboard_navigation_and_expansion(watched_page, served, lazy_scene_dir)
     assert page.evaluate("document.activeElement.dataset.path") == "world/group/inner"
     page.keyboard.press("ArrowLeft")  # back to the parent
     assert page.evaluate("document.activeElement.dataset.path") == "world/group"
-    page.keyboard.press("Enter")  # no checkbox in lazy: Enter selects
-    assert page.evaluate("selectedPath") == "world/group"
+    page.keyboard.press("Enter")  # toggles the row's visibility checkbox
+    assert page.evaluate("hierarchyHidden.size") == 1
+    page.keyboard.press("Enter")
+    assert page.evaluate("hierarchyHidden.size") == 0
 
 
 def test_search_expands_to_matches_and_dims_the_rest(
@@ -165,7 +167,7 @@ def test_focus_centres_the_camera_on_the_placement(
 ):
     page = open_tree(watched_page, served, lazy_scene_dir)
     before = page.evaluate("dist")
-    row(page, "world/hcal_b").query_selector(".tree-action-btn").click()
+    row(page, "world/hcal_b").query_selector("text=Focus").click()
     centre = object_center(page, "world/hcal_b")
     view = page.evaluate("viewCenter")
     assert all(abs(a - b) < 1e-6 for a, b in zip(view, centre, strict=True))
@@ -182,7 +184,7 @@ def test_focus_on_a_container_uses_its_rendered_descendants(
     watched_page, served, lazy_scene_dir
 ):
     page = open_tree(watched_page, served, lazy_scene_dir)
-    row(page, "world/group").query_selector(".tree-action-btn").click()
+    row(page, "world/group").query_selector("text=Focus").click()
     assert page.evaluate("viewCenter") == object_center(page, "world/group/inner")
 
 
@@ -190,7 +192,7 @@ def test_focus_on_an_empty_container_falls_back_to_the_nearest_rendered_ancestor
     watched_page, served, lazy_scene_dir
 ):
     page = open_tree(watched_page, served, lazy_scene_dir)
-    row(page, "world/empty").query_selector(".tree-action-btn").click()
+    row(page, "world/empty").query_selector("text=Focus").click()
     box = page.evaluate(
         """(() => {
           const b = placements.objects.map(o => o.bbox);
@@ -216,7 +218,7 @@ def test_inspector_focus_button_focuses_the_selection(
 def test_reset_view_restores_the_default_centre(watched_page, served, lazy_scene_dir):
     page = open_tree(watched_page, served, lazy_scene_dir)
     default = page.evaluate("center")
-    row(page, "world/hcal_b").query_selector(".tree-action-btn").click()
+    row(page, "world/hcal_b").query_selector("text=Focus").click()
     assert page.evaluate("viewCenter") != default
     page.click("#resetView")
     assert page.evaluate("viewCenter") == default
@@ -228,7 +230,7 @@ def test_saved_view_round_trips_tree_expansion_selection_and_focus(
     page = open_tree(watched_page, served, lazy_scene_dir)
     row(page, "world/group").query_selector(".tree-toggle").click()
     row(page, "world/group/inner").click()
-    row(page, "world/hcal_b").query_selector(".tree-action-btn").click()
+    row(page, "world/hcal_b").query_selector("text=Focus").click()
     state = page.evaluate("saveViewState()")
     assert "world/group" in state["hierarchy"]["expandedPaths"]
     assert state["hierarchy"]["selectedPath"] == "world/group/inner"
@@ -248,23 +250,6 @@ def test_saved_view_round_trips_tree_expansion_selection_and_focus(
     fresh.wait_for_function(
         "document.getElementById('viewStatePanel').innerText.includes('world/ghost')"
     )
-
-
-def test_hidden_and_isolated_state_is_reported_as_not_applicable(
-    watched_page, served, lazy_scene_dir
-):
-    page = open_lazy(watched_page, served, lazy_scene_dir, fetch_placements=False)
-    state = page.evaluate("saveViewState()")
-    state["hierarchy"]["hiddenPaths"] = ["world/ecal_a"]
-    report = page.evaluate(
-        """async state => {
-          const result = {applied: [], ignored: [], unknown: [], warnings: [], errors: []};
-          await applyViewSections(validateViewState(state).state, result);
-          return result;
-        }""",
-        state,
-    )
-    assert "hierarchy" in report["ignored"]
 
 
 def test_a_v1_export_disables_the_hierarchy_with_an_explanation(

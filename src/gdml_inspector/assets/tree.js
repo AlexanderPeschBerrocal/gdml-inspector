@@ -243,3 +243,30 @@ function focusBounds(tree, objectsById, path) {
   }
   return box;
 }
+
+function pathIsDescendantOrSelf(path, ancestorPath) {
+  return path === ancestorPath || path.startsWith(ancestorPath + '/');
+}
+
+// Row decorator shared by both viewers for hide/isolate: the checkbox state
+// (checked / unchecked / indeterminate / disabled when a row has no rendered
+// geometry), "filtered" for objects hidden by something other than the
+// hierarchy (search, isolation elsewhere), and the isolated row marker.
+//   visibilityDecorator(() => tree, hiddenIds, () => isolatedPath, id => isVisible)
+function visibilityDecorator(getTree, hiddenIds, getIsolated, objectVisible) {
+  return (path, {row, check}, node) => {
+    const ids = getTree().subtreeObjectIds(path);
+    if (ids.length === 0) {
+      check.checked = true; check.indeterminate = false; check.disabled = true;
+    } else {
+      check.disabled = false;
+      const hiddenCount = ids.filter(id => hiddenIds.has(id)).length;
+      check.indeterminate = hiddenCount > 0 && hiddenCount < ids.length;
+      check.checked = hiddenCount === 0;
+    }
+    const filteredOut = node.rendered && node.objectId !== undefined
+      && !objectVisible(node.objectId) && !hiddenIds.has(node.objectId);
+    row.classList.toggle('tree-filtered', !!filteredOut);
+    row.classList.toggle('tree-isolated', path === getIsolated());
+  };
+}

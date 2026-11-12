@@ -631,21 +631,7 @@ const tree = createHierarchyTree(document.getElementById('hierarchyTree'), {
   ],
   labelExtra: node => nodeIsApproximated(node) ? ' <span class="tree-warn" title="Approximated geometry">⚠</span>' : '',
   searchExtra: node => node.rendered && node.objectId !== undefined ? SCENE.objects[node.objectId].solid : '',
-  decorateRow: (path, {row, check}, node) => {
-    const ids = tree.subtreeObjectIds(path);
-    if (ids.length === 0) {
-      check.checked = true; check.indeterminate = false; check.disabled = true;
-    } else {
-      check.disabled = false;
-      const hiddenCount = ids.filter(id => hierarchyHidden.has(id)).length;
-      check.indeterminate = hiddenCount > 0 && hiddenCount < ids.length;
-      check.checked = hiddenCount === 0;
-    }
-    const filteredOut = node.rendered && node.objectId !== undefined
-      && objectVisible[node.objectId] === 0 && !hierarchyHidden.has(node.objectId);
-    row.classList.toggle('tree-filtered', !!filteredOut);
-    row.classList.toggle('tree-isolated', path === isolatedPath);
-  },
+  decorateRow: visibilityDecorator(() => tree, hierarchyHidden, () => isolatedPath, id => objectVisible[id] === 1),
   afterRefresh: () => {
     document.getElementById('hierarchyClearIsolation').style.display = isolatedPath ? '' : 'none';
   },
@@ -657,9 +643,6 @@ const renderTree = tree.render;
 const updateAllRowStates = tree.refreshStates;
 const subtreeObjectIds = tree.subtreeObjectIds;
 
-function pathIsDescendantOrSelf(path, ancestorPath) {
-  return path === ancestorPath || path.startsWith(ancestorPath + '/');
-}
 function nodeIsApproximated(node) {
   if (!node.rendered || node.objectId === undefined) return false;
   return approximatedSolids.has(SCENE.objects[node.objectId].solid);
