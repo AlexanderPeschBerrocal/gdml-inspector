@@ -228,10 +228,10 @@ selected subsystem/layers and "unload hidden".
 
 ## Object picking and the placement inspector (standalone viewer)
 
-- Available in the standalone viewer only, same reasoning as the hierarchy
-  panel above: the lazy viewer's binary chunk format has no stable
-  per-object IDs today, so lazy-mode picking needs a chunk-format
-  extension and is tracked separately under issue #4.
+- Available in the standalone viewer only so far. Lazy chunks now carry
+  per-vertex object ids (chunk format v2) and a `placements.json` asset, but
+  the lazy viewer does not consume them yet; lazy picking is tracked
+  separately under issue #4.
 - "Both modes identify the same placement for an equivalent visible view"
   and "selection survives a chunk reload" (issue #4's lazy-specific
   acceptance criteria) are not addressed by this slice.
@@ -326,6 +326,18 @@ Exports have no remote CDN dependencies (a test asserts every request stays
 on the local origin). Single HTML exports can be opened offline, whereas
 chunked exports must be served over HTTP with their asset directory alongside
 them.
+
+**Lazy chunk format v2 and `placements.json`.** Chunks carry one little-endian
+`uint32` per vertex (`objectId + 1`, 0 = none), costing +4 bytes/vertex (20% of
+chunk bytes). The viewer reads v1 and v2 chunks. `placements.json` (digest and
+size in the manifest, covered by `--reuse-assets` and `--bundle`) holds the
+hierarchy nodes, the object table and the solids table so metadata exists for
+objects whose chunk is not loaded. It is one file and is not compact: measured
+on a real detector (7,405 objects, 7,481 nodes) it is 7.9 MiB, about 1.1
+KB/object, because nodes and objects repeat paths, names and matrices. That is
+acceptable at this scale but not for 100k+ objects; per-chunk metadata
+splitting belongs to issue #7. `--reuse-assets` refuses output from before v2
+and asks for a rebuild.
 
 **Provenance.** Every export carries `schemaVersion: 2` and a `provenance`
 block: tool and backend names/versions, the input file's name and sha256, the

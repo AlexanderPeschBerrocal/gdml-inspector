@@ -54,6 +54,12 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Lazy chunk format v2: each chunk stores a per-vertex object id, and a new
+  `<stem>.assets/placements.json` asset (hierarchy nodes, object table,
+  solids) is recorded in the manifest with its digest, verified by
+  `--reuse-assets` and included in `--bundle`. Foundation for lazy picking,
+  hierarchy and filters; the viewer reads both v1 and v2 chunks but does not
+  use the ids yet. `--reuse-assets` on older output requires a rebuild.
 - Saved view state in both viewers. "Save view" writes a versioned
   `.view.json` (camera, projection, opacity, axes, clipping and, per viewer:
   filters, hidden/isolated/selected placements and tree state, or the selected

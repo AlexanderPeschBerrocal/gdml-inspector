@@ -5,7 +5,8 @@ assembly nodes that add_volume() never sees."""
 import json
 import re
 
-from gdml_inspector.standalone import HierarchyGDMLSceneBuilder, write_html
+from gdml_inspector.hierarchy import HierarchyGDMLSceneBuilder
+from gdml_inspector.standalone import write_html
 
 from .helpers import DEFAULT_OPTIONS, hierarchy_nodes
 
@@ -90,7 +91,7 @@ def test_write_html_embeds_a_hierarchy_and_solids_table_matching_the_builder(
     path = single_volume()
     builder = HierarchyGDMLSceneBuilder(path, **DEFAULT_OPTIONS)
     scene = builder.build()
-    nodes = builder.hierarchy_nodes(scene)
+    nodes = builder.hierarchy_nodes()
     solids = builder.solids_table()
 
     output = tmp_path / "out.html"

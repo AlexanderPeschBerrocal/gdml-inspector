@@ -10,12 +10,12 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from array import array
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _distribution_version
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from . import __version__
 
@@ -597,12 +597,11 @@ class Diagnostic:
         }
 
 
-class ObjectDict(TypedDict):
-    """One rendered placement, as recorded by ``add_volume()``. The base
-    shape every exporter produces; ``diff.py``'s ``DiffMixin`` additionally
-    sets ``matrix``, which is why that key is optional here rather than on
-    a separate type -- ``list`` is invariant, so a distinct subtype would
-    not be assignable where this one is expected."""
+class ObjectRecord(TypedDict):
+    """What identifies one rendered placement, independent of where its
+    vertices end up: the single-file scene and the lazy chunks both record
+    exactly this (lazy in its placements asset), so the two modes describe
+    the same placement identically."""
 
     id: int
     name: str
@@ -612,11 +611,43 @@ class ObjectDict(TypedDict):
     material: str
     solid: str
     solidType: str
-    firstVertex: int
-    vertexCount: int
     bbox: list[float]
     path: str
+
+
+class ObjectDict(ObjectRecord):
+    """One rendered placement in the single-file scene, as recorded by
+    ``add_volume()``: its record plus where its vertices are. ``diff.py``'s
+    ``DiffMixin`` additionally sets ``matrix``, which is why that key is
+    optional here rather than on a separate type -- ``list`` is invariant, so
+    a distinct subtype would not be assignable where this one is expected."""
+
+    firstVertex: int
+    vertexCount: int
     matrix: NotRequired[list[float]]
+
+
+def object_record(
+    object_id: int,
+    volume: VolumeDef,
+    path: str,
+    solid_type: str,
+    lo: Sequence[float],
+    hi: Sequence[float],
+) -> ObjectRecord:
+    leaf = path.rsplit("/", 1)[-1]
+    return {
+        "id": object_id,
+        "name": leaf,
+        "semanticName": semantic_name(leaf),
+        "volume": volume.name,
+        "semanticVolume": semantic_name(volume.name),
+        "material": volume.material or "(none)",
+        "solid": volume.solid,
+        "solidType": solid_type,
+        "bbox": [*lo, *hi],
+        "path": path,
+    }
 
 
 @dataclass
@@ -988,22 +1019,11 @@ class GDMLSceneBuilder:
                     self.scene.bbox_min[i] = min(self.scene.bbox_min[i], tp[i])
                     self.scene.bbox_max[i] = max(self.scene.bbox_max[i], tp[i])
         count = len(self.scene.positions) // 3 - first
+        record = object_record(obj_id, volume, path, solid_type, lo, hi)
         self.scene.objects.append(
-            {
-                "id": obj_id,
-                "name": path.rsplit("/", 1)[-1],
-                "semanticName": semantic_name(path.rsplit("/", 1)[-1]),
-                "volume": volume.name,
-                "semanticVolume": semantic_name(volume.name),
-                "material": volume.material or "(none)",
-                "solid": volume.solid,
-                "solidType": solid_type,
-                "firstVertex": first,
-                "vertexCount": count,
-                "bbox": [*lo, *hi],
-                "path": path,
-            }
+            cast(ObjectDict, {**record, "firstVertex": first, "vertexCount": count})
         )
+        self._on_object_added(path, volume, matrix, obj_id)
 
     def _budget_exceeded(self) -> bool:
         """Whether the configured object/vertex budget has been reached.
@@ -1032,6 +1052,16 @@ class GDMLSceneBuilder:
         transform and position in the tree (e.g. a hierarchical exporter);
         standalone/lazy/diff only need the cumulative world matrix already
         threaded through add_volume()."""
+
+    def _on_object_added(
+        self, path: str, volume: VolumeDef, matrix: Mat4, object_id: int
+    ) -> None:
+        """No-op hook called once for every placement that actually gets a
+        mesh (``add_volume()`` returns early, without calling it, when a
+        solid produces no triangles), with the composed world matrix and the
+        object's id. Consumers needing per-object data beyond the scene's
+        own record (the hierarchy, the lazy placements asset) implement it
+        instead of overriding ``add_volume()``."""
 
     def _on_volume(self, path: str, volume: VolumeDef, render: bool) -> None:
         """No-op hook for consumers that need a volume's render decision

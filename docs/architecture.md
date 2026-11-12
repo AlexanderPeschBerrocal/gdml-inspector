@@ -37,8 +37,12 @@ decide when to stop and how to report it, since lazy's vertices never touch
 `self.scene` and so can't be counted the same way. `diff`'s builders
 specialise only `add_volume()`/`to_dict()`, to additionally record each
 object's placement matrix and a solids-by-ref parameter table; they inherit
-the shared walk unchanged. The lazy binary format does not retain per-object
-IDs; precise lazy picking requires an extension to that format.
+the shared walk unchanged. Lazy chunks (format v2) carry one `objectId + 1` per vertex, and the lazy
+builders also use `HierarchyMixin` (`hierarchy.py`, fed by the
+`_on_object_added()` hook) to write a `placements.json` asset: hierarchy nodes,
+an object table indexed by id, and the solids table. Standalone and lazy build
+object records with the same `object_record()` helper, so both describe a
+placement identically.
 
 `gltf`'s builders specialise two further no-op hooks on the shared walk:
 `_on_placement()` (each placement's own local matrix and tree position,

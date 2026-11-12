@@ -259,7 +259,8 @@ async function loadChunk(chunk) {
     const magic=String.fromCharCode(...new Uint8Array(data,0,8));
     if (magic!=='GDMLCHN1') throw new Error(`Bad chunk magic in ${chunk.url}`);
     const version=view.getUint32(8,true), vertices=view.getUint32(12,true);
-    if (version!==1) throw new Error(`Unsupported chunk version ${version}`);
+    // v2 appends a per-vertex object-id section after the colours (read by the picking pass); v1 has none.
+    if (version!==1 && version!==2) throw new Error(`Unsupported chunk version ${version}`);
     const posOff=view.getUint32(16,true), colorOff=view.getUint32(20,true), idOff=view.getUint32(24,true), endOff=view.getUint32(28,true);
     if (endOff!==data.byteLength) throw new Error(`Truncated chunk ${chunk.url}`);
     const positions=new Float32Array(data,posOff,vertices*3);
