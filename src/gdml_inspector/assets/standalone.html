@@ -92,6 +92,8 @@ input[type=checkbox] { width: auto; }
   <label><input id="coordinateAxes" type="checkbox" checked> Coordinate axes</label>
   <div class="axis-key"><span class="axis-x">X</span><span class="axis-y">Y</span><span class="axis-z">Z</span></div>
   <label><input id="darkMode" type="checkbox"> Dark mode</label>
+  <h2>View state</h2>
+  <div id="viewStatePanel"></div>
   <h2>Clipping</h2>
   <div id="clipPanel"></div>
   <h2>Filter</h2>
@@ -151,9 +153,11 @@ input[type=checkbox] { width: auto; }
 <script>
 __CLIPPING_JS__
 __COMMON_JS__
+__VIEWSTATE_JS__
 const SCENE = __SCENE__;
 const HIERARCHY = __HIERARCHY__;
 const SOLIDS = __SOLIDS__;
+const INITIAL_VIEW = __VIEW_STATE__;
 {
   const status = showSchemaStatus(schemaStatus(SCENE.meta.schemaVersion));
   if (status.level === 'future') throw new Error(status.message);
@@ -1056,6 +1060,125 @@ document.getElementById('detailFocus').onclick = () => { if (selectedPath) focus
 document.getElementById('detailIsolate').onclick = () => { if (selectedPath) toggleIsolate(selectedPath); };
 
 renderTree();
+
+// --- Saved view state (see assets/viewstate.js) --------------------------
+// Everything is stored by placement path / name, never numeric id, so a view
+// survives a re-export; entries that no longer exist are reported.
+function captureViewSections() {
+  const input = document.getElementById.bind(document);
+  return {
+    camera: {yaw, pitch, dist, pan: [panX, panY], viewCenter: viewCenter.slice(), up: cameraUp.slice()},
+    projection: {type: 'perspective', fovDeg: 45},
+    display: {
+      opacity: +input('opacity').value,
+      wireframe: input('wireframe').checked,
+      axes: input('coordinateAxes').checked,
+      theme: document.body.classList.contains('dark') ? 'dark' : 'light',
+    },
+    clipping: getClipState(),
+    filters: {
+      disabledMaterials: materialNames.filter(name => materialEnabled[name] === false),
+      solidType: input('solidType').value,
+      search: input('search').value,
+    },
+    hierarchy: {
+      hiddenPaths: [...hierarchyHidden].map(id => SCENE.objects[id].path).sort(),
+      expandedPaths: [...expandedPaths].sort(),
+      isolatedPath,
+      selectedPath,
+      search: input('hierarchySearch').value,
+    },
+  };
+}
+
+async function applyViewSections(state, report) {
+  const input = document.getElementById.bind(document);
+  const fire = (id, type) => input(id).dispatchEvent(new Event(type, {bubbles: true}));
+  if (state.layers) report.ignored.push('layers');
+  if (state.display) {
+    const d = state.display;
+    if (d.opacity !== undefined) { input('opacity').value = d.opacity; fire('opacity', 'input'); }
+    if (d.wireframe !== undefined) { input('wireframe').checked = d.wireframe; fire('wireframe', 'change'); }
+    if (d.axes !== undefined) { input('coordinateAxes').checked = d.axes; fire('coordinateAxes', 'change'); }
+    if (d.theme !== undefined) { input('darkMode').checked = d.theme === 'dark'; fire('darkMode', 'change'); }
+    report.applied.push('display');
+  }
+  if (state.camera) {
+    const c = state.camera;
+    yaw = c.yaw; pitch = c.pitch; dist = c.dist; panX = c.pan[0]; panY = c.pan[1];
+    cameraUp = c.up.slice();
+    viewCenter = c.viewCenter ? c.viewCenter.slice() : center.slice();
+    report.applied.push('camera');
+  }
+  if (state.projection) report.applied.push('projection');
+  if (state.clipping) { setClipState(state.clipping); report.applied.push('clipping'); }
+  if (state.filters) {
+    const f = state.filters;
+    materialNames.forEach(name => { materialEnabled[name] = true; });
+    for (const name of f.disabledMaterials) {
+      if (name in materialEnabled) materialEnabled[name] = false;
+      else report.unknown.push({kind: 'material', value: name});
+    }
+    renderMaterialToggles();
+    const select = input('solidType');
+    if (f.solidType && ![...select.options].some(o => o.value === f.solidType)) {
+      report.unknown.push({kind: 'solid type', value: f.solidType});
+      select.value = '';
+    } else select.value = f.solidType;
+    input('search').value = f.search;
+    report.applied.push('filters');
+  }
+  if (state.hierarchy) {
+    const h = state.hierarchy;
+    hierarchyHidden.clear();
+    for (const path of h.hiddenPaths) {
+      const node = nodeByPath[path];
+      if (node && node.objectId !== undefined) hierarchyHidden.add(node.objectId);
+      else report.unknown.push({kind: 'hidden placement', value: path});
+    }
+    if (h.isolatedPath !== null && !nodeByPath[h.isolatedPath]) {
+      report.unknown.push({kind: 'isolated placement', value: h.isolatedPath});
+      isolatedPath = null;
+    } else isolatedPath = h.isolatedPath;
+    expandedPaths.clear();
+    for (const path of h.expandedPaths) {
+      if (nodeByPath[path]) expandedPaths.add(path);
+      else report.unknown.push({kind: 'expanded placement', value: path});
+    }
+    input('hierarchySearch').value = h.search;
+  }
+  applyFilters();
+  if (state.hierarchy) {
+    const path = state.hierarchy.selectedPath;
+    clearSelection();
+    const node = path === null ? null : nodeByPath[path];
+    if (path !== null && !node) report.unknown.push({kind: 'selected placement', value: path});
+    else if (node && node.rendered && node.objectId !== undefined) {
+      setHighlightedObject(node.objectId);
+      updateInspector(path);
+      revealInHierarchy(path);
+    } else if (node) {
+      selectedPath = path;
+      updateInspector(path);
+    }
+    renderTree();
+    if (state.hierarchy.search) applyHierarchySearch();
+    report.applied.push('hierarchy');
+  }
+}
+
+buildViewStatePanel(document.getElementById('viewStatePanel'), {
+  viewer: 'standalone',
+  bbox: SCENE.meta.bbox,
+  saved: {
+    schemaVersion: SCENE.meta.schemaVersion === undefined ? 1 : SCENE.meta.schemaVersion,
+    inputSha256: SCENE.meta.provenance ? SCENE.meta.provenance.input.sha256 : null,
+    sourceFile: SCENE.meta.sourceFile,
+  },
+  capture: captureViewSections,
+  apply: applyViewSections,
+});
+if (INITIAL_VIEW) loadViewState(INITIAL_VIEW, 'embedded view state');
 </script>
 </body>
 </html>

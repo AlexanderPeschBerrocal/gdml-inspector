@@ -8,7 +8,6 @@ import json
 import sys
 import tempfile
 from collections.abc import Sequence
-from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
@@ -17,7 +16,7 @@ if TYPE_CHECKING:
 
 from . import __version__
 from . import geometry as base
-from ._assets import read_asset
+from ._assets import read_asset, render_template
 from .geometry import (
     DIAGNOSTIC_CATEGORIES,
     DIAGNOSTIC_SEVERITIES,
@@ -33,6 +32,7 @@ from .geometry import (
 )
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder, debug_pyg4ometry_mesh
 from .server import serve_file
+from .viewstate import load_view_state, stale_warning
 
 
 class HierarchyNodeDict(TypedDict):
@@ -162,27 +162,24 @@ def write_html(
     hierarchy: list[HierarchyNodeDict],
     solids: dict[str, SolidInfo],
     output: Path,
+    view_state: dict[str, object] | None = None,
 ) -> None:
-    title = html.escape(Path(scene["meta"]["source"]).name)
+    def embed(value: object) -> str:
+        return json.dumps(value, separators=(",", ":")).replace("</", "<\\/")
+
     output.write_text(
-        files("gdml_inspector.assets")
-        .joinpath("standalone.html")
-        .read_text(encoding="utf-8")
-        # Static shared code first: GDML-derived JSON inserted afterwards is
-        # never scanned for template tokens.
-        .replace("__CLIPPING_JS__", read_asset("clipping.js"))
-        .replace("__COMMON_JS__", read_asset("common.js"))
-        .replace("__TITLE__", title)
-        .replace(
-            "__SCENE__", json.dumps(scene, separators=(",", ":")).replace("</", "<\\/")
-        )
-        .replace(
-            "__HIERARCHY__",
-            json.dumps(hierarchy, separators=(",", ":")).replace("</", "<\\/"),
-        )
-        .replace(
-            "__SOLIDS__",
-            json.dumps(solids, separators=(",", ":")).replace("</", "<\\/"),
+        render_template(
+            "standalone.html",
+            {
+                "CLIPPING_JS": read_asset("clipping.js"),
+                "COMMON_JS": read_asset("common.js"),
+                "VIEWSTATE_JS": read_asset("viewstate.js"),
+                "TITLE": html.escape(Path(scene["meta"]["source"]).name),
+                "SCENE": embed(scene),
+                "HIERARCHY": embed(hierarchy),
+                "SOLIDS": embed(solids),
+                "VIEW_STATE": embed(view_state),
+            },
         ),
         encoding="utf-8",
     )
@@ -230,6 +227,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--max-objects", type=int, default=100_000)
     parser.add_argument("--max-vertices", type=int, default=5_000_000)
+    parser.add_argument(
+        "--view-state",
+        type=Path,
+        default=None,
+        metavar="FILE.view.json",
+        help="Embed a saved view (the viewer's Save view button) as the "
+        "initial camera, filters, selection, clipping and theme",
+    )
     parser.add_argument(
         "--redact-paths",
         action="store_true",
@@ -293,6 +298,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.debug_pyg4ometry_mesh:
         return debug_pyg4ometry_mesh(args.gdml, args.debug_solid or None)
 
+    view_state = None
+    if args.view_state is not None:
+        try:
+            view_state = load_view_state(args.view_state)
+        except ValueError as exc:
+            print(f"gdml-inspector: --view-state: {exc}", file=sys.stderr)
+            return 2
+
     output = args.out or (
         Path(tempfile.gettempdir()) / f"{args.gdml.stem}.gdml_viewer.html"
     )
@@ -331,8 +344,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.validate_only:
         print(f"Validated {args.gdml}; not writing a viewer (--validate-only).")
     else:
+        if view_state is not None:
+            digest = str(builder.provenance()["input"]["sha256"])  # type: ignore[index]
+            note = stale_warning(view_state, digest)
+            if note:
+                print(f"Warning: {note}.", file=sys.stderr)
         write_html(
-            scene, builder.hierarchy_nodes(scene), builder.solids_table(), output
+            scene,
+            builder.hierarchy_nodes(scene),
+            builder.solids_table(),
+            output,
+            view_state,
         )
         print(f"Wrote {output}")
     print(

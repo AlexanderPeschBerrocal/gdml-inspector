@@ -188,6 +188,44 @@ suite is not a claim that those gaps have been fixed.
   to `fast`, standalone to `medium`), so the same circles are drawn as
   different polygons; pass the same `--quality` to compare them exactly.
 
+## Saved view state (both viewers)
+
+"Save view" writes a `<name>.view.json` sidecar; "Load view" reads one; and
+`--view-state FILE` (both modes) embeds one as the initial view (in lazy mode
+it wins over `--default-load`). The file is versioned (`format`, `version: 1`)
+and records: camera (yaw, pitch, distance, pan, up, view centre), the
+projection (always perspective, 45 degrees, recorded explicitly), opacity,
+axes, the full clipping state, and the geometry it was saved for (schema
+version, input sha256, filename). Standalone adds wireframe, theme, material
+toggles, solid-type and text filters, hidden and isolated placements, the
+selected placement and the hierarchy tree's expansion and search. Lazy adds the
+selected subsystem/layers and "unload hidden".
+
+- **Stable identifiers:** placements are stored by path and layers by
+  subsystem/layer name, never by numeric id, so a view survives a re-export.
+  Entries that no longer exist (placement, material, solid type, layer) are
+  skipped and listed by name in the viewer, and a view saved for a different
+  input digest is flagged as possibly stale; everything that still exists is
+  restored. `--view-state` also prints that warning at export time.
+- **Deterministic and never half-applied:** a file is validated completely
+  first; any error (not JSON, wrong format, newer or invalid version, bad
+  camera/projection/display/clipping/filters) rejects it with the reason and
+  changes nothing. Applying resets every section the file covers before
+  setting it, so loading the same file always produces the same view (a saved
+  view loaded into a fresh page re-saves to an identical file). Unknown keys are
+  ignored with a warning.
+- **Versions:** only version 1 exists, so there is nothing to migrate yet; the
+  validator has a migration table, and a newer file is refused with guidance to
+  update gdml-inspector or re-save.
+- **Across viewers:** a standalone view loaded in the lazy viewer applies only
+  what both share (camera, projection, opacity, axes, clipping) and says what
+  it ignored, and vice versa.
+- **Not saved:** material colours (fixed by the backend, not user-editable),
+  selection in lazy mode (it has no picking), the diagnostics filters, and the
+  scroll position of the hierarchy tree. Lazy layer names come from this
+  tool's heuristic classification, so a changed classification can make a layer
+  unknown; it is reported as such.
+
 ## Object picking and the placement inspector (standalone viewer)
 
 - Available in the standalone viewer only, same reasoning as the hierarchy
