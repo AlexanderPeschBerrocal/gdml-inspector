@@ -54,6 +54,11 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Lazy inspector: an Isolate button next to Focus. Lazy picking now has
+  browser coverage for resize, high-DPI, zoom/pan, large-face centres,
+  phi-clipped geometry and translucent surfaces; the docs state how
+  translucent surfaces are picked and no longer describe picking as
+  vertex-sampling or absent in lazy mode.
 - Unified object filters in both viewers (`filters.js`): literal search with
   optional `material:`/`volume:`/`name:`/`path:`/`solid:`/`type:` scopes,
   exclude, solid type, material toggles and invert, combined with AND, with an
