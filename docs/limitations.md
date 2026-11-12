@@ -367,6 +367,37 @@ hidden".
 
 ## Rendering and size limits
 
+**Caps (`--max-objects`, `--max-vertices`; `max_objects`/`max_vertices` in the
+API) are hard caps with one rule in every mode (standalone, lazy, diff, glTF,
+API):**
+
+- An object is admitted only if it fits *whole*: the object count must be below
+  the cap and the object's vertices must fit in the vertices still free.
+  Objects are never truncated, so the exported vertex count never exceeds
+  `--max-vertices`.
+- The first object that does not fit ends the export. It, and everything after
+  it in traversal order, is not exported, **even if a later, smaller object
+  would have fit**. Traversal order is the GDML placement order, depth first.
+- Exactly reaching a cap with nothing left to place is not an error and reports
+  nothing. A rejection adds one `limit-reached` warning naming the limit that
+  stopped it, how many objects/vertices were exported, the placement it stopped
+  before (also its `identifier`) and how many vertices that placement needed
+  against how many were left.
+- A single object larger than `--max-vertices` is therefore never exported; with
+  `--max-objects 0` nothing is.
+- The caps bound the work spent on geometry: at most one rejected solid is
+  meshed past the cap. They do not bound parsing the GDML itself.
+
+**Chunk size (`--lazy --chunk-vertices`) is nominal for one object only:**
+
+- Objects of one subsystem/layer are packed into parts in traversal order; a
+  part is closed when the next object would take it over `--chunk-vertices`.
+- Every part is therefore at most `--chunk-vertices`, except a part holding a
+  single object that is itself larger: that object gets its own part, whole
+  (never split mid-solid), and the part is as large as the object. Splitting
+  one solid across parts would need triangle-boundary splitting and per-part
+  object ranges and is not done.
+
 - Union meshes can contain interior surfaces. Subtraction/intersection can look
   like the first operand in the Python backend or after backend fallback.
 - Mesh quality is polygonal approximation of curves, not a physical tolerance.

@@ -796,6 +796,10 @@ class GDMLSceneBuilder:
         self.constants: dict[str, float] = {"pi": math.pi}
         self.world = ""
         self.mesh_cache: dict[str, tuple[list[Triangle], str]] = {}
+        # Set when add_volume() rejects an object that would break the object
+        # or vertex budget; traversal then stops (see _admit_object()).
+        self.budget_stop: dict[str, object] | None = None
+        self._budget_reported = False
         self.scene = Scene()
         self.backend_name = "python"
 
@@ -1002,6 +1006,10 @@ class GDMLSceneBuilder:
         tris, solid_type = self.solid_mesh(volume.solid)
         if not tris:
             return
+        if not self._admit_object(
+            path, len(tris) * 3, len(self.scene.objects), len(self.scene.positions) // 3
+        ):
+            return
         obj_id = len(self.scene.objects)
         rgba = color_for_material(volume.material)
         first = len(self.scene.positions) // 3
@@ -1025,24 +1033,61 @@ class GDMLSceneBuilder:
         )
         self._on_object_added(path, volume, matrix, obj_id)
 
+    def _admit_object(
+        self, path: str, vertex_count: int, objects: int, vertices: int
+    ) -> bool:
+        """Hard-cap check made *before* an object is committed: it is admitted
+        only if it fits both ``max_objects`` and ``max_vertices`` whole (an
+        object is never truncated). The first rejection records what stopped
+        the export and ends traversal; nothing after it, in traversal order,
+        is exported even if a later, smaller object would have fit."""
+        if self.budget_stop is not None:
+            return False
+        if objects >= self.max_objects:
+            limit = "objects"
+        elif vertices + vertex_count > self.max_vertices:
+            limit = "vertices"
+        else:
+            return True
+        self.budget_stop = {
+            "limit": limit,
+            "path": path,
+            "vertexCount": vertex_count,
+            "objects": objects,
+            "vertices": vertices,
+        }
+        return False
+
     def _budget_exceeded(self) -> bool:
-        """Whether the configured object/vertex budget has been reached.
-        Overridden by lazy export, whose vertices never touch self.scene."""
-        return (
-            len(self.scene.objects) >= self.max_objects
-            or len(self.scene.positions) // 3 >= self.max_vertices
-        )
+        """Whether a placement was rejected by the budget, so traversal
+        should stop."""
+        return self.budget_stop is not None
 
     def _record_budget_exceeded(self) -> None:
-        """Called the first time traversal stops early because the budget
-        was reached. Overridden by lazy export, which defers the actual
-        diagnostic to the end of a whole build."""
+        """Report the stop once, however many traversal levels unwind."""
+        stop = self.budget_stop
+        if stop is None or self._budget_reported:
+            return
+        self._budget_reported = True
+        if stop["limit"] == "objects":
+            reason = f"the object limit ({self.max_objects:,}) was reached"
+        else:
+            reason = (
+                f"placement needs {stop['vertexCount']:,} vertices but only "
+                f"{self.max_vertices - cast(int, stop['vertices']):,} of the "
+                f"{self.max_vertices:,}-vertex limit remain"
+            )
         self.scene.diagnose(
             "limit-reached",
             "warning",
             "budget",
             "export",
-            "Stopped at configured object/vertex limit",
+            f"Stopped at the configured {stop['limit']} limit: exported "
+            f"{stop['objects']:,} objects / {stop['vertices']:,} vertices; "
+            f"stopped before placement {stop['path']} ({reason}). That "
+            "placement and everything after it in traversal order were not "
+            "exported; an object is never cut partway.",
+            identifier=str(stop["path"]),
         )
 
     def _on_placement(
