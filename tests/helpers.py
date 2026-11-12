@@ -40,7 +40,9 @@ def diff_builder(path, **options):
 
 def api_geometry(path, **options):
     """Load a Geometry with the usual test defaults via Geometry.load()."""
-    return Geometry.load(path, **(DEFAULT_OPTIONS | options))
+    # Pinned: "auto" would pick pyg4ometry whenever it happens to be installed,
+    # and these tests exercise the pure-Python backend.
+    return Geometry.load(path, **({"backend": "python"} | DEFAULT_OPTIONS | options))
 
 
 def hierarchy_nodes(path, **options):
