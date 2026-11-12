@@ -54,6 +54,19 @@ input[type=range] { width: 100%; }
 .inspector-section { margin: 10px 0 4px; font-size: 11px; color: #8fa6c0; text-transform: uppercase; letter-spacing: .03em; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: pre-wrap; }
 .warn { background: #3a2a10; border: 1px solid #8a5a16; padding: 8px; border-radius: 6px; font-size: 12px; margin: 6px 0; }
+#hierarchyTree { max-height: 320px; overflow: auto; border: 1px solid #2c4059; border-radius: 6px; padding: 4px; margin-top: 6px; }
+#hierarchySearch { width: 100%; margin-top: 6px; }
+.tree-row { display: flex; align-items: center; gap: 4px; padding: 2px; border-radius: 4px; font-size: 12px; }
+.tree-row:focus { outline: 2px solid #65a5ff; outline-offset: -2px; }
+.tree-row.tree-selected { background: #213c5e; }
+.tree-row.tree-match { background: #3a2a10; }
+.tree-row.tree-dim { opacity: 0.35; }
+.tree-toggle { width: 14px; flex: none; cursor: pointer; user-select: none; color: #8fa6c0; text-align: center; }
+.tree-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-muted { color: #8fa6c0; font-size: 11px; }
+.tree-warn { color: #f4a63b; }
+.tree-actions { display: flex; gap: 3px; flex: none; }
+.tree-action-btn { margin: 0; padding: 2px 6px; font-size: 10px; }
 .small-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
 #detailsEmpty { color: #9cafc6; font-size: 12px; }
 </style>
@@ -102,6 +115,12 @@ input[type=range] { width: 100%; }
   <div id="clipPanel"></div>
   <div class="row"><label>Opacity</label><input id="opacity" type="range" min="10" max="100" value="100"></div>
 
+  <h2>Hierarchy</h2>
+  <div class="muted" id="hierarchyNote">The placement tree is loaded on demand (it downloads placements.json) and opens automatically when you pick an object.</div>
+  <div class="row"><button id="loadHierarchy" type="button">Load hierarchy</button></div>
+  <input id="hierarchySearch" placeholder="Search volume, placement, path..." style="display:none">
+  <div id="hierarchyTree" aria-label="Physical volume hierarchy" style="display:none"></div>
+
   <h2>Picked Object</h2>
   <div id="details"></div>
 
@@ -127,6 +146,7 @@ input[type=range] { width: 100%; }
 <script>
 __CLIPPING_JS__
 __PICKING_JS__
+__TREE_JS__
 __INSPECTOR_JS__
 __COMMON_JS__
 __VIEWSTATE_JS__
@@ -371,6 +391,7 @@ const axisColors=new Uint8Array([
 const axisPosBuffer=makeBuffer(axisPositions);
 const axisColorBuffer=makeBuffer(axisColors);
 let yaw=-0.65,pitch=0.45,dist=radius*1.35,panX=0,panY=0,renderPending=false;
+let viewCenter=center.slice();
 let cameraUp=[0,1,0];
 function mat4mul(a,b) { const o=new Float32Array(16); for(let r=0;r<4;r++)for(let c=0;c<4;c++)for(let k=0;k<4;k++)o[c*4+r]+=a[k*4+r]*b[c*4+k]; return o; }
 function perspective(fovy,aspect,near,far) { const f=1/Math.tan(fovy/2),nf=1/(near-far); return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*nf,-1,0,0,2*far*near*nf,0]); }
@@ -400,7 +421,7 @@ function updateAxisLabels(mvp,enabled) {
   }
 }
 function cameraMvp() {
-  const cx=center[0]+panX,cy=center[1]+panY,cz=center[2];
+  const cx=viewCenter[0]+panX,cy=viewCenter[1]+panY,cz=viewCenter[2];
   const eye=[cx+dist*Math.cos(pitch)*Math.sin(yaw),cy+dist*Math.sin(pitch),cz+dist*Math.cos(pitch)*Math.cos(yaw)];
   return mat4mul(perspective(45*Math.PI/180,canvas.width/canvas.height,radius/1000,radius*30),lookAt(eye,[cx,cy,cz],cameraUp));
 }
@@ -440,7 +461,7 @@ window.addEventListener('mousemove',e=>{ if(!drag)return; const dx=e.clientX-dra
 canvas.addEventListener('wheel',e=>{e.preventDefault();dist*=Math.exp(e.deltaY*.001);requestRender();},{passive:false});
 window.addEventListener('resize',requestRender);
 function setCamera(newYaw,newPitch,up) {
-  yaw=newYaw; pitch=newPitch; cameraUp=up; dist=radius*1.35; panX=panY=0; requestRender();
+  yaw=newYaw; pitch=newPitch; cameraUp=up; dist=radius*1.35; panX=panY=0; viewCenter=center.slice(); requestRender();
 }
 document.getElementById('resetView').onclick=()=>setCamera(-.65,.45,[0,1,0]);
 document.getElementById('viewXYPos').onclick=()=>setCamera(0,0,[0,1,0]);
@@ -471,6 +492,7 @@ const inspector = buildInspector(document.getElementById('details'), {
   emptyText: pickingSupported
     ? 'Click a point in the detector view.'
     : 'Picking is unavailable: this export predates per-object ids. Re-export with this version of gdml-inspector.',
+  actions: [[{id: 'detailFocus', label: 'Focus', onClick: info => focusOnPath(info.path)}]],
 });
 let placements = null, placementsPromise = null;
 
@@ -490,7 +512,7 @@ function ensurePlacements() {
       }
       const doc = JSON.parse(new TextDecoder().decode(data));
       placements = {
-        objects: doc.objects, solids: doc.solids,
+        nodes: doc.nodes, objects: doc.objects, solids: doc.solids,
         nodeByPath: Object.fromEntries(doc.nodes.map(n => [n.path, n])),
       };
       return placements;
@@ -519,12 +541,16 @@ function refreshInspector() {
 function clearSelection() {
   selectedObjectId = null; selectedPath = null;
   inspector.clear(); requestRender();
+  if (hierarchyTree) hierarchyTree.refreshStates();
 }
 async function selectObjectId(id) {
   selectedObjectId = id; selectedPath = null; requestRender();
   const loaded = await ensurePlacements();
   if (selectedObjectId !== id) return; // a newer click superseded this one
-  if (loaded) { selectedPath = loaded.objects[id].path; refreshInspector(); }
+  if (loaded) {
+    selectedPath = loaded.objects[id].path; refreshInspector();
+    ensureTree(loaded).reveal(selectedPath);
+  }
 }
 // Selects by placement path (saved views). Returns false for an unknown path.
 async function selectPath(path) {
@@ -534,7 +560,63 @@ async function selectPath(path) {
   selectedPath = path;
   selectedObjectId = node.objectId !== undefined ? node.objectId : null;
   refreshInspector(); requestRender();
+  if (hierarchyTree) hierarchyTree.reveal(path);
   return true;
+}
+
+// --- Hierarchy tree (see assets/tree.js) ---
+// Built from the placement nodes in placements.json, so it lists every
+// placement whether or not its layer is loaded. Row clicks select a placement
+// (highlighted when its geometry is shown). There is no hide/isolate here yet:
+// that needs a per-vertex visibility buffer.
+let hierarchyTree = null;
+function ensureTree(loaded) {
+  if (hierarchyTree) return hierarchyTree;
+  const worldPath = loaded.nodes.find(n => n.parentPath === null).path;
+  hierarchyTree = createHierarchyTree(document.getElementById('hierarchyTree'), {
+    nodes: loaded.nodes, worldPath,
+    selected: () => selectedPath,
+    onSelect: path => {
+      const node = loaded.nodeByPath[path];
+      selectedPath = path;
+      selectedObjectId = node.objectId !== undefined ? node.objectId : null;
+      refreshInspector(); requestRender();
+    },
+    actions: [{label: 'Focus', onClick: path => focusOnPath(path)}],
+    labelExtra: node => {
+      const object = node.rendered && node.objectId !== undefined ? loaded.objects[node.objectId] : null;
+      return object && approximatedSolids.has(object.solid) ? ' <span class="tree-warn" title="Approximated geometry">⚠</span>' : '';
+    },
+    searchExtra: node => node.rendered && node.objectId !== undefined ? loaded.objects[node.objectId].solid : '',
+  });
+  for (const id of ['hierarchySearch', 'hierarchyTree']) document.getElementById(id).style.display = '';
+  document.getElementById('loadHierarchy').style.display = 'none';
+  document.getElementById('hierarchyNote').style.display = 'none';
+  hierarchyTree.render();
+  return hierarchyTree;
+}
+document.getElementById('loadHierarchy').onclick = async () => {
+  const loaded = await ensurePlacements();
+  if (!loaded) return;
+  ensureTree(loaded);
+  if (selectedPath !== null) hierarchyTree.reveal(selectedPath);
+};
+document.getElementById('hierarchySearch').addEventListener('input', e => { if (hierarchyTree) hierarchyTree.search(e.target.value); });
+if (!pickingSupported) {
+  document.getElementById('loadHierarchy').disabled = true;
+  document.getElementById('hierarchyNote').textContent = 'The hierarchy is unavailable: this export predates per-object ids and the placements file. Re-export with this version of gdml-inspector.';
+}
+function focusOnPath(path) {
+  if (!placements) return;
+  const box = focusBounds(ensureTree(placements), id => placements.objects[id], path);
+  if (!box) { viewCenter = center.slice(); dist = radius * 1.35; }
+  else {
+    viewCenter = [(box[0] + box[3]) / 2, (box[1] + box[4]) / 2, (box[2] + box[5]) / 2];
+    const r = Math.hypot(box[3] - box[0], box[4] - box[1], box[5] - box[2]) || radius * 0.05;
+    dist = Math.max(r * 1.6, radius * 0.02);
+  }
+  panX = 0; panY = 0;
+  requestRender();
 }
 
 function pickAt(devX, devY) {
@@ -576,7 +658,7 @@ buildTree(); renderMaterials(); updateStats(); requestRender();
 // --- Saved view state (see assets/viewstate.js) ---
 function captureViewSections() {
   return {
-    camera: {yaw, pitch, dist, pan: [panX, panY], up: cameraUp.slice()},
+    camera: {yaw, pitch, dist, pan: [panX, panY], viewCenter: viewCenter.slice(), up: cameraUp.slice()},
     projection: {type: 'perspective', fovDeg: 45},
     display: {
       opacity: +document.getElementById('opacity').value,
@@ -584,8 +666,8 @@ function captureViewSections() {
       releaseHidden: document.getElementById('releaseHidden').checked,
     },
     clipping: getClipState(),
-    // The lazy viewer has no tree yet; only the selection is meaningful.
-    hierarchy: {hiddenPaths: [], expandedPaths: [], isolatedPath: null, selectedPath, search: ''},
+    // No hide/isolate in the lazy tree: only expansion and the selection are saved.
+    hierarchy: {hiddenPaths: [], expandedPaths: hierarchyTree ? [...hierarchyTree.expandedPaths].sort() : [], isolatedPath: null, selectedPath, search: ''},
     layers: {
       selected: [...selectedLayers].sort().map(key => {
         const [subsystem, layer] = key.split('\x1f');
@@ -598,7 +680,7 @@ async function applyViewSections(state, report) {
   const input = document.getElementById.bind(document);
   const fire = (id, type) => input(id).dispatchEvent(new Event(type, {bubbles: true}));
   if (state.filters) report.ignored.push('filters');
-  if (state.hierarchy) report.ignored.push('hierarchy');  // the tree; the selection is applied below
+  if (state.hierarchy && (state.hierarchy.hiddenPaths.length || state.hierarchy.isolatedPath !== null)) report.ignored.push('hierarchy');  // hide/isolate; expansion and selection are applied below
   if (state.display) {
     const d = state.display;
     if (d.opacity !== undefined) { input('opacity').value = d.opacity; fire('opacity', 'input'); }
@@ -611,6 +693,7 @@ async function applyViewSections(state, report) {
     const c = state.camera;
     yaw = c.yaw; pitch = c.pitch; dist = c.dist; panX = c.pan[0]; panY = c.pan[1];
     cameraUp = c.up.slice();
+    viewCenter = c.viewCenter ? c.viewCenter.slice() : center.slice();
     report.applied.push('camera');
   }
   if (state.projection) report.applied.push('projection');
@@ -625,6 +708,18 @@ async function applyViewSections(state, report) {
       await setLayer(key, true);
     }
     report.applied.push('layers');
+  }
+  if (state.hierarchy && pickingSupported && state.hierarchy.expandedPaths.length) {
+    const loaded = await ensurePlacements();
+    if (loaded) {
+      const tree = ensureTree(loaded);
+      for (const path of state.hierarchy.expandedPaths) {
+        if (loaded.nodeByPath[path]) tree.expandedPaths.add(path);
+        else report.unknown.push({kind: 'expanded placement', value: path});
+      }
+      tree.render();
+      report.applied.push('hierarchy tree');
+    }
   }
   if (state.hierarchy) {
     const path = state.hierarchy.selectedPath;
