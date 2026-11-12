@@ -7,8 +7,8 @@ from gdml_inspector.api import Geometry
 from gdml_inspector.diff import DiffGDMLSceneBuilder
 from gdml_inspector.geometry import GDMLSceneBuilder
 from gdml_inspector.gltf import GltfGDMLSceneBuilder, build_gltf
+from gdml_inspector.hierarchy import HierarchyGDMLSceneBuilder
 from gdml_inspector.lazy import LazyGDMLSceneBuilder
-from gdml_inspector.standalone import HierarchyGDMLSceneBuilder
 
 DEFAULT_OPTIONS = {
     "quality": "fast",
@@ -50,7 +50,7 @@ def hierarchy_nodes(path, **options):
     return (scene, nodes_by_path)."""
     builder = HierarchyGDMLSceneBuilder(path, **(DEFAULT_OPTIONS | options))
     scene = builder.build()
-    nodes = builder.hierarchy_nodes(scene)
+    nodes = builder.hierarchy_nodes()
     return scene, {node["path"]: node for node in nodes}
 
 

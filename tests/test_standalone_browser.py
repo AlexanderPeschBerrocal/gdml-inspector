@@ -5,7 +5,8 @@ resulting DOM/JS state (not pixel comparisons)."""
 
 import pytest
 
-from gdml_inspector.standalone import HierarchyGDMLSceneBuilder, write_html
+from gdml_inspector.hierarchy import HierarchyGDMLSceneBuilder
+from gdml_inspector.standalone import write_html
 
 from .helpers import DEFAULT_OPTIONS
 
@@ -51,7 +52,7 @@ def viewer_path(tmp_path, write_gdml):
     )
     builder = HierarchyGDMLSceneBuilder(path, **DEFAULT_OPTIONS)
     scene = builder.build()
-    nodes = builder.hierarchy_nodes(scene)
+    nodes = builder.hierarchy_nodes()
     solids = builder.solids_table()
     output = tmp_path / "viewer.html"
     write_html(scene, nodes, solids, output)
