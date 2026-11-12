@@ -23,13 +23,19 @@ from urllib.parse import quote, unquote
 from . import __version__
 from . import geometry as base
 from ._assets import read_asset, render_template
+from .hierarchy import HierarchyMixin, HierarchyNodeDict
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder
 from .server import serve_file
 from .viewstate import load_view_state, stale_warning
 
 MAGIC = b"GDMLCHN1"
-FORMAT_VERSION = 1
+# 1: positions + colours. 2: adds one uint32 per vertex (objectId + 1, 0 = no
+# object) in the id section the v1 header already reserved. The viewer reads
+# both; the writer emits 2 whenever a chunk carries ids.
+FORMAT_VERSION = 2
 HEADER = struct.Struct("<8s6I")
+PLACEMENTS_NAME = "placements.json"
+assert array("I").itemsize == 4, "the chunk id section needs 32-bit unsigned items"
 SUBSYSTEM_ORDER = {
     "Tracker": 0,
     "ECAL": 1,
@@ -130,6 +136,7 @@ class Chunk:
     part: int
     positions: array = field(default_factory=lambda: array("f"))
     colors: array = field(default_factory=lambda: array("B"))
+    ids: array = field(default_factory=lambda: array("I"))
     object_count: int = 0
     bbox_min: list[float] = field(default_factory=lambda: [float("inf")] * 3)
     bbox_max: list[float] = field(default_factory=lambda: [float("-inf")] * 3)
@@ -173,6 +180,9 @@ class LazyBuilderMixin:
     traverse: Callable[..., None]
     provenance: Callable[..., dict[str, object]]
     source_label: Callable[[], str]
+    solids_table: Callable[[], dict[str, base.SolidInfo]]
+    hierarchy_nodes: Callable[[], list[HierarchyNodeDict]]
+    _on_object_added: Callable[..., None]
 
     def __init__(self, *args: object, chunk_vertices: int, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
@@ -182,6 +192,10 @@ class LazyBuilderMixin:
         self.total_vertices = 0
         self.total_objects = 0
         self.material_counts: Counter[str] = Counter()
+        # One record per accepted object, in id order (id == index): what the
+        # placements asset publishes so a viewer knows every object, loaded or
+        # not, without fetching geometry.
+        self.object_table: list[dict[str, object]] = []
         self.global_bbox_min = [float("inf")] * 3
         self.global_bbox_max = [float("-inf")] * 3
         self.stopped_at_limit = False
@@ -200,7 +214,7 @@ class LazyBuilderMixin:
         return chunk
 
     def add_volume(self, volume: base.VolumeDef, matrix: base.Mat4, path: str) -> None:
-        tris, _ = self.solid_mesh(volume.solid)
+        tris, solid_type = self.solid_mesh(volume.solid)
         if not tris:
             return
 
@@ -235,14 +249,19 @@ class LazyBuilderMixin:
         material = canonical_material(volume.material) or "(none)"
         rgba = base.color_for_material(volume.material)
 
+        object_id = self.total_objects
         chunk.positions.extend(positions)
         chunk.colors.extend(array("B", rgba) * vertex_count)
+        chunk.ids.extend(array("I", [object_id + 1]) * vertex_count)
         chunk.object_count += 1
         bbox_union(chunk.bbox_min, chunk.bbox_max, lo, hi)
         bbox_union(self.global_bbox_min, self.global_bbox_max, lo, hi)
         self.material_counts[material] += 1
         self.total_vertices += vertex_count
         self.total_objects += 1
+        record = base.object_record(object_id, volume, path, solid_type, lo, hi)
+        self.object_table.append({**record, "chunk": chunk.base_key})
+        self._on_object_added(path, volume, matrix, object_id)
 
     def _budget_exceeded(self) -> bool:
         # OR in stopped_at_limit: add_volume() can reject a single
@@ -278,36 +297,65 @@ class LazyBuilderMixin:
             )
 
 
-class LazyGDMLSceneBuilder(LazyBuilderMixin, base.GDMLSceneBuilder):
+class LazyGDMLSceneBuilder(LazyBuilderMixin, HierarchyMixin, base.GDMLSceneBuilder):
     pass
 
 
-class LazyPyg4ometrySceneBuilder(LazyBuilderMixin, Pyg4ometrySceneBuilder):
+class LazyPyg4ometrySceneBuilder(
+    LazyBuilderMixin, HierarchyMixin, Pyg4ometrySceneBuilder
+):
     pass
 
 
 def write_chunk(chunk: Chunk, path: Path) -> int:
     positions = base.little_endian_bytes(chunk.positions)
     colors = base.little_endian_bytes(chunk.colors)
+    has_ids = chunk.vertex_count > 0 and len(chunk.ids) == chunk.vertex_count
+    ids = base.little_endian_bytes(chunk.ids) if has_ids else b""
     position_offset = HEADER.size
     color_offset = position_offset + len(positions)
     id_offset = color_offset + len(colors)
-    total_size = id_offset
+    total_size = id_offset + len(ids)
     header = HEADER.pack(
         MAGIC,
-        FORMAT_VERSION,
+        FORMAT_VERSION if has_ids else 1,
         chunk.vertex_count,
         position_offset,
         color_offset,
         id_offset,
         total_size,
     )
-    path.write_bytes(header + positions + colors)
+    path.write_bytes(header + positions + colors + ids)
     return total_size
 
 
 def chunk_sort_key(chunk: Chunk) -> tuple[int, str, int]:
     return SUBSYSTEM_ORDER.get(chunk.subsystem, 99), chunk.layer, chunk.part
+
+
+def write_placements(builder: LazyBuilderMixin, asset_dir: Path) -> dict:
+    """Every object's identity and metadata, plus the hierarchy and the solids
+    table, in one JSON file beside the chunks. It is separate from the HTML so
+    the page stays small and a viewer can describe an object whose chunk it
+    has not fetched (or has unloaded). Entry ``objects[i]`` is object id ``i``,
+    the same id stored per vertex in the chunks. One file suits COCOA-scale
+    scenes; splitting it per chunk is future scale work."""
+    nodes = builder.hierarchy_nodes()
+    document = {
+        "schemaVersion": base.SCHEMA_VERSION,
+        "nodes": nodes,
+        "objects": builder.object_table,
+        "solids": builder.solids_table(),
+    }
+    data = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    (asset_dir / PLACEMENTS_NAME).write_bytes(data)
+    return {
+        "url": quote(f"{asset_dir.name}/{PLACEMENTS_NAME}"),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+        "nodes": len(nodes),
+        "objects": len(builder.object_table),
+    }
 
 
 def write_assets(
@@ -346,12 +394,16 @@ def write_assets(
             }
         )
 
+    placements = write_placements(builder, asset_dir)
+
     material_colors = {
         name: list(base.color_for_material(name)) for name in builder.material_counts
     }
     return {
         "format": "gdml-lazy-viewer-v1",
         "schemaVersion": base.SCHEMA_VERSION,
+        "chunkFormat": FORMAT_VERSION,
+        "placements": placements,
         "provenance": builder.provenance(chunkVertices=builder.chunk_vertices),
         "source": builder.source_label(),
         "sourceFile": builder.gdml.name,
@@ -426,6 +478,12 @@ def check_reusable(
             f"{output} was written by a newer gdml-inspector (schema {schema}, "
             f"this one reads {base.SCHEMA_VERSION}). Update gdml-inspector."
         )
+    if manifest.get("chunkFormat", 1) < FORMAT_VERSION or "placements" not in manifest:
+        return (
+            f"{output} predates per-object ids and the placements asset (chunk "
+            f"format {manifest.get('chunkFormat', 1)}, this gdml-inspector writes "
+            f"{FORMAT_VERSION}). Rebuild it once without --reuse-assets."
+        )
     provenance = manifest.get("provenance", {})
     recorded_digest = provenance.get("input", {}).get("sha256")
     current_digest = hashlib.sha256(args.gdml.read_bytes()).hexdigest()
@@ -451,7 +509,7 @@ def check_reusable(
             f"built with ({built_with!r}). Rebuild without --reuse-assets."
         )
     problems = []
-    for chunk in manifest.get("chunks", []):
+    for chunk in [*manifest.get("chunks", []), manifest["placements"]]:
         path = chunk_path(output, chunk)
         if not path.is_file():
             problems.append(f"{chunk.get('url')}: missing")
@@ -467,8 +525,9 @@ def check_reusable(
             )
     if problems:
         return (
-            f"Could not reuse {output}: {len(problems)} binary chunk(s) are missing "
-            f"or corrupt; first: {problems[0]}. Rebuild without --reuse-assets."
+            f"Could not reuse {output}: {len(problems)} asset(s) (binary chunks or "
+            f"the placements file) are missing or corrupt; first: {problems[0]}. "
+            "Rebuild without --reuse-assets."
         )
     return None
 
@@ -484,7 +543,8 @@ def write_bundle(manifest: dict, output: Path, archive: Path) -> None:
     manifest lists: sorted entries, fixed timestamps and permissions, so the
     same export always produces the same archive."""
     names = [output.name] + sorted(
-        unquote(str(chunk["url"])) for chunk in manifest["chunks"]
+        unquote(str(entry["url"]))
+        for entry in [*manifest["chunks"], manifest["placements"]]
     )
     archive.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
