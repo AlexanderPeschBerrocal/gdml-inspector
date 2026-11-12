@@ -54,11 +54,15 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Lazy viewer: hide and isolate (row checkboxes, Isolate, Clear isolation)
+  through a per-vertex visibility buffer built from the chunk ids. It affects
+  drawing and picking, survives unloading a layer, and hidden/isolated
+  placements are saved in and restored from view-state files, including ones
+  saved from the standalone viewer.
 - Lazy viewer: a hierarchy tree built on demand from `placements.json`, with
   selection, Focus (also from the inspector), search, keyboard navigation and
   saved-view support for expansion and camera centre. The tree component
-  (`tree.js`) is now shared with the standalone viewer. Hide/isolate remain
-  standalone-only.
+  (`tree.js`) is now shared with the standalone viewer.
 - Lazy viewer: depth-correct click picking, selection highlight and the
   placement inspector, sharing `picking.js` and `inspector.js` with the
   standalone viewer. Placement details come from `placements.json` (fetched

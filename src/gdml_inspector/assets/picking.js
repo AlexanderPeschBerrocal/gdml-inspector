@@ -118,3 +118,17 @@ function bindIdAttribute(gl, loc, buffer) {
     gl.vertexAttrib4f(loc, 0, 0, 0, 0);
   }
 }
+
+// Bind a per-vertex visibility attribute (one byte per vertex, 0 = hidden) or,
+// when there is none, the constant "visible".
+function bindVisibilityAttribute(gl, loc, buffer) {
+  if (loc < 0) return;
+  if (buffer) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 1, gl.UNSIGNED_BYTE, false, 0, 0);
+  } else {
+    gl.disableVertexAttribArray(loc);
+    gl.vertexAttrib1f(loc, 1);
+  }
+}
