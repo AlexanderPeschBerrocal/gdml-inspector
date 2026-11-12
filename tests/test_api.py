@@ -3,6 +3,7 @@ mesh sharing by solid ref, bounds, diagnostics, resource-budget semantics,
 and backend error behaviour. Repo-local slice of issue #12 -- no ROOT
 Explorer adapter or shared-fixture parity here, see docs/limitations.md."""
 
+import subprocess
 import sys
 
 import pytest
@@ -115,6 +116,12 @@ def test_backend_auto_falls_back_silently_when_pyg4ometry_is_unavailable(
 def test_importing_api_does_not_require_pyg4ometry_streamlit_or_plotly():
     # gdml_inspector.pyg4ometry_backend is fine to have loaded (it has no
     # top-level pyg4ometry import itself); the actual optional packages
-    # must not be pulled in just by importing gdml_inspector.api.
-    for name in ("pyg4ometry", "streamlit", "plotly"):
-        assert name not in sys.modules
+    # must not be pulled in just by importing gdml_inspector.api. Checked in
+    # a fresh interpreter: this process may already have imported pyg4ometry
+    # for an unrelated test when it is installed.
+    code = (
+        "import sys, gdml_inspector.api;"
+        "bad = [n for n in ('pyg4ometry', 'streamlit', 'plotly') if n in sys.modules];"
+        "sys.exit(1 if bad else 0)"
+    )
+    assert subprocess.run([sys.executable, "-I", "-c", code]).returncode == 0

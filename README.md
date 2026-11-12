@@ -128,6 +128,14 @@ e.g. `--fail-on budget` to also fail on a truncated export. A `--strict`
 export without `--validate-only` still writes its output for inspection; it
 just does not exit 0.
 
+Exports record their provenance (tool/backend versions, input name and sha256,
+resolved settings, units). Add `--redact-paths` before sharing an artifact to
+drop the absolute source path while keeping the filename and digest; with
+explicit options it makes the output byte-for-byte reproducible. For lazy
+exports, `--bundle out.zip` also writes a deterministic archive, and
+`--reuse-assets` verifies the source digest, build options and every chunk's
+sha256 before refreshing the HTML.
+
 ## Comparing two geometries
 
 ```bash

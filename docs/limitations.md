@@ -273,16 +273,53 @@ suite is not a claim that those gaps have been fixed.
   limit can be exceeded by the last whole object. A single large object can
   also exceed the nominal lazy chunk size. Do not treat these as hard memory
   budgets. Performance and diagnostics issues track improvements.
-- `--reuse-assets` checks the stored source filename and existence of referenced
-  chunks, not a content digest. It refreshes HTML/UI without validating that
-  geometry or build settings are unchanged. Rebuild after changing those.
+- `--reuse-assets` refreshes the HTML/UI around existing chunks and refuses,
+  exit code 4 with the reason, when that could show stale or damaged geometry:
+  the source file's sha256 differs from the one recorded (a same-named file
+  edited in place), an explicitly passed build option differs from the
+  recorded setting, a chunk is missing, has the wrong size or fails its sha256,
+  or the viewer predates schema 2 (no digests recorded) or comes from a newer
+  gdml-inspector. Options you do not pass are not compared, so a plain
+  `--reuse-assets --default-load X` keeps working.
 
 ## Distribution and provenance
 
-Exports have no remote CDN dependencies. Single HTML exports can be opened
-offline, whereas chunked exports must be served over HTTP with their asset
-directory alongside them. Absolute source paths are retained in embedded
-metadata by the inherited exporters; inspect them before sharing artifacts.
+Exports have no remote CDN dependencies (a test asserts every request stays
+on the local origin). Single HTML exports can be opened offline, whereas
+chunked exports must be served over HTTP with their asset directory alongside
+them.
+
+**Provenance.** Every export carries `schemaVersion: 2` and a `provenance`
+block: tool and backend names/versions, the input file's name and sha256, the
+resolved build settings, and the units (mm, rad). Lazy chunks additionally
+record a sha256 and size each; the viewer verifies a fetched chunk against it
+when the browser offers `crypto.subtle` (https or localhost) and reports a
+mismatch as a chunk error. Output exported before schema 2 still displays, with
+a notice; one from a newer gdml-inspector is refused with guidance.
+
+**Path redaction.** By default the absolute source path is still embedded
+(`source`, `provenance.input.path`) for local convenience. `--redact-paths`
+(both modes, also on `--reuse-assets`) replaces it with the bare filename and
+drops `input.path`; the filename and sha256 remain, so provenance is not lost.
+Review artifacts before sharing them: names of volumes, materials and
+placements come from the GDML and are embedded as-is.
+
+**Reproducibility.** No timestamp or machine-specific value is ever written to
+geometry content. With the same tool version, backend and backend version,
+input bytes *and filename*, identical explicit options, the same *output*
+filename (lazy chunk URLs contain `<stem>.assets`) and `--redact-paths`, the
+standalone HTML, and the lazy HTML and every chunk, are **byte-for-byte
+identical**, whatever the directory or working directory. Without
+`--redact-paths` they differ only in the embedded path. Different tool or
+backend versions differ by design, since they are recorded. Note that `--lazy`
+defaults to `--quality fast` and standalone to `medium`: pass the options
+explicitly when comparing builds.
+
+**Bundles.** Lazy chunk URLs are percent-encoded, so a bundle moved to any path
+or URL (spaces, Unicode, `%`, `#`) still loads. `--bundle ARCHIVE.zip` also
+writes the HTML and exactly the chunks its manifest lists as a deterministic zip
+(sorted entries, fixed timestamps and permissions); the directory itself is
+equally portable. Single-file standalone output is unchanged.
 Use `--backend python` or `--backend pyg4ometry` to avoid the environment-dependent
 choice of `auto`. Fully deterministic exports, metadata redaction, and versioned
 scene contracts are roadmap items; `--diff` reports already include a sha256

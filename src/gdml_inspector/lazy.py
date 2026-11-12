@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import math
@@ -11,12 +12,14 @@ import re
 import struct
 import sys
 import tempfile
+import zipfile
 from array import array
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
+from urllib.parse import quote, unquote
 
 from . import __version__
 from . import geometry as base
@@ -168,6 +171,8 @@ class LazyBuilderMixin:
     solid_mesh: Callable[..., tuple[list[base.Triangle], str]]
     parse: Callable[[], None]
     traverse: Callable[..., None]
+    provenance: Callable[..., dict[str, object]]
+    source_label: Callable[[], str]
 
     def __init__(self, *args: object, chunk_vertices: int, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
@@ -321,6 +326,7 @@ def write_assets(
         file_stem = f"{stem}.part{suffix:03d}"
         binary_name = f"{file_stem}.bin"
         byte_size = write_chunk(chunk, asset_dir / binary_name)
+        digest = hashlib.sha256((asset_dir / binary_name).read_bytes()).hexdigest()
         chunk_entries.append(
             {
                 "key": chunk.key,
@@ -328,7 +334,10 @@ def write_assets(
                 "subsystem": chunk.subsystem,
                 "layer": chunk.layer,
                 "part": chunk.part,
-                "url": f"{asset_dir.name}/{binary_name}",
+                # Percent-encoded per segment so the bundle loads from any
+                # path or URL, including spaces, Unicode, '%' and '#'.
+                "url": quote(f"{asset_dir.name}/{binary_name}"),
+                "sha256": digest,
                 "objects": chunk.object_count,
                 "vertices": chunk.vertex_count,
                 "triangles": chunk.triangle_count,
@@ -342,7 +351,9 @@ def write_assets(
     }
     return {
         "format": "gdml-lazy-viewer-v1",
-        "source": str(builder.gdml),
+        "schemaVersion": base.SCHEMA_VERSION,
+        "provenance": builder.provenance(chunkVertices=builder.chunk_vertices),
+        "source": builder.source_label(),
         "sourceFile": builder.gdml.name,
         "backend": builder.backend_name,
         "quality": builder.quality,
@@ -371,10 +382,117 @@ def write_html(manifest: dict, output: Path) -> None:
         # Static shared code first: GDML-derived JSON inserted afterwards is
         # never scanned for template tokens.
         .replace("__CLIPPING_JS__", read_asset("clipping.js"))
+        .replace("__COMMON_JS__", read_asset("common.js"))
         .replace("__TITLE__", title)
         .replace("__MANIFEST__", manifest_json),
         encoding="utf-8",
     )
+
+
+# --reuse-assets compares only options the user actually passed; each maps to
+# where the build recorded it.
+_SETTING_OPTIONS = {
+    "quality": "quality",
+    "include_containers": "includeContainers",
+    "include_world": "includeWorld",
+    "max_objects": "maxObjects",
+    "max_vertices": "maxVertices",
+    "chunk_vertices": "chunkVertices",
+}
+
+
+def chunk_path(output: Path, chunk: dict) -> Path:
+    """Where a manifest chunk entry lives on disk (its url is percent-encoded)."""
+    return output.parent / unquote(str(chunk.get("url", "")))
+
+
+def check_reusable(
+    manifest: dict, output: Path, args: argparse.Namespace, explicit: set[str]
+) -> str | None:
+    """Why ``output``'s existing chunks cannot be reused for ``args``, or
+    None when they can. Checks the schema, the source file's sha256 (not its
+    name), every explicitly passed build option, and each chunk's presence,
+    size and sha256."""
+    schema = manifest.get("schemaVersion", 1)
+    if not isinstance(schema, int) or schema < base.SCHEMA_VERSION:
+        return (
+            f"{output} predates schema {base.SCHEMA_VERSION} (it records no input "
+            "or chunk digests, so its chunks cannot be verified). Rebuild it once "
+            "without --reuse-assets."
+        )
+    if schema > base.SCHEMA_VERSION:
+        return (
+            f"{output} was written by a newer gdml-inspector (schema {schema}, "
+            f"this one reads {base.SCHEMA_VERSION}). Update gdml-inspector."
+        )
+    provenance = manifest.get("provenance", {})
+    recorded_digest = provenance.get("input", {}).get("sha256")
+    current_digest = hashlib.sha256(args.gdml.read_bytes()).hexdigest()
+    if recorded_digest != current_digest:
+        return (
+            f"{args.gdml} has changed since {output} was built (recorded sha256 "
+            f"{str(recorded_digest)[:12]}..., now {current_digest[:12]}...). "
+            "Rebuild without --reuse-assets."
+        )
+    settings = provenance.get("settings", {})
+    for dest, key in _SETTING_OPTIONS.items():
+        if dest in explicit and getattr(args, dest) != settings.get(key):
+            flag = "--" + dest.replace("_", "-")
+            return (
+                f"{flag} {getattr(args, dest)!r} differs from the setting this viewer "
+                f"was built with ({settings.get(key)!r}). Rebuild without "
+                "--reuse-assets to apply it, or drop the option."
+            )
+    built_with = provenance.get("backend", {}).get("name")
+    if "backend" in explicit and args.backend not in ("auto", built_with):
+        return (
+            f"--backend {args.backend} differs from the backend this viewer was "
+            f"built with ({built_with!r}). Rebuild without --reuse-assets."
+        )
+    problems = []
+    for chunk in manifest.get("chunks", []):
+        path = chunk_path(output, chunk)
+        if not path.is_file():
+            problems.append(f"{chunk.get('url')}: missing")
+            continue
+        data = path.read_bytes()
+        if len(data) != chunk.get("bytes"):
+            problems.append(
+                f"{chunk.get('url')}: {len(data)} bytes, expected {chunk.get('bytes')}"
+            )
+        elif hashlib.sha256(data).hexdigest() != chunk.get("sha256"):
+            problems.append(
+                f"{chunk.get('url')}: sha256 does not match (corrupt or edited)"
+            )
+    if problems:
+        return (
+            f"Could not reuse {output}: {len(problems)} binary chunk(s) are missing "
+            f"or corrupt; first: {problems[0]}. Rebuild without --reuse-assets."
+        )
+    return None
+
+
+def redact_manifest(manifest: dict) -> None:
+    """Apply the --redact-paths policy to an already-written manifest."""
+    manifest["source"] = manifest.get("sourceFile", "")
+    manifest.get("provenance", {}).get("input", {}).pop("path", None)
+
+
+def write_bundle(manifest: dict, output: Path, archive: Path) -> None:
+    """A deterministic zip of the viewer HTML and exactly the chunks its
+    manifest lists: sorted entries, fixed timestamps and permissions, so the
+    same export always produces the same archive."""
+    names = [output.name] + sorted(
+        unquote(str(chunk["url"])) for chunk in manifest["chunks"]
+    )
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for name in names:
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = 0o644 << 16
+            bundle.writestr(info, (output.parent / name).read_bytes())
 
 
 def read_existing_manifest(output: Path) -> dict:
@@ -399,13 +517,13 @@ def read_existing_manifest(output: Path) -> dict:
     return manifest
 
 
-def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         # This parser is reached both via the dedicated gdml-inspector-lazy
         # entry point and via `gdml-inspector --lazy`; the dedicated name
         # is used here since argparse can only show one.
         prog="gdml-inspector-lazy",
-        description="Build a lazy-loading, phi-cut-enabled HTML viewer for GDML geometry.",
+        description="Build a lazy-loading, clipping-enabled HTML viewer for GDML geometry.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -468,17 +586,55 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Rewrite and optionally serve an existing output HTML without rebuilding its binary chunks",
     )
     parser.add_argument(
+        "--redact-paths",
+        action="store_true",
+        help="Omit the absolute source path from the output (the filename and "
+        "sha256 digest are kept); with the same explicit options, input and "
+        "output filename the output is then byte-for-byte reproducible",
+    )
+    parser.add_argument(
+        "--bundle",
+        type=Path,
+        default=None,
+        metavar="ARCHIVE.zip",
+        help="Also write the HTML and its chunks as a deterministic zip archive",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Serve the viewer on localhost"
     )
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
         "--no-browser", action="store_true", help="Do not open a browser with --serve"
     )
-    return parser.parse_args(argv)
+    return parser
+
+
+def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
+
+
+class _Unset(list):
+    """Sentinel default. A list, so append-style options (--default-load)
+    can still extend it; empty means "never passed"."""
+
+
+def explicit_options(argv: Sequence[str]) -> set[str]:
+    """The options actually given on the command line (not defaulted), so
+    --reuse-assets can compare only what the user asked for. Parsed a second
+    time with every default replaced by a sentinel, since options carrying
+    their own default ignore argparse's `argument_default`."""
+    parser = build_parser()
+    parser.set_defaults(**dict.fromkeys(vars(parser.parse_args(argv)), _Unset()))
+    return {
+        dest
+        for dest, value in vars(parser.parse_args(argv)).items()
+        if not (isinstance(value, _Unset) and not value)
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    args = parse_args(arguments)
     if not args.gdml.is_file():
         print(f"GDML file not found: {args.gdml}", file=sys.stderr)
         return 2
@@ -502,21 +658,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 4
-        missing_assets = [
-            str(chunk.get("url", ""))
-            for chunk in manifest.get("chunks", [])
-            if not (output.parent / str(chunk.get("url", ""))).is_file()
-        ]
-        if missing_assets:
-            print(
-                f"Could not reuse {output}: {len(missing_assets)} binary chunk(s) are missing; "
-                f"first missing asset: {missing_assets[0]}",
-                file=sys.stderr,
-            )
+        reason = check_reusable(manifest, output, args, explicit_options(arguments))
+        if reason is not None:
+            print(reason, file=sys.stderr)
             return 4
         if args.default_load:
             manifest["defaultLoad"] = list(args.default_load)
+        if args.redact_paths:
+            redact_manifest(manifest)
         write_html(manifest, output)
+        if args.bundle is not None:
+            write_bundle(manifest, output, args.bundle)
+            print(f"Wrote bundle {args.bundle}")
         print(
             f"Rewrote {output} using {len(manifest['chunks']):,} existing binary chunks."
         )
@@ -550,6 +703,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_vertices=args.max_vertices,
         chunk_vertices=args.chunk_vertices,
     )
+    builder.redact_paths = args.redact_paths
     builder.build_chunks()
     if args.validate_only:
         diagnostics = base.diagnostics_list(builder.scene.diagnostics)
@@ -563,6 +717,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         manifest = write_assets(builder, output, args.default_load)
         write_html(manifest, output)
+        if args.bundle is not None:
+            write_bundle(manifest, output, args.bundle)
+            print(f"Wrote bundle {args.bundle}")
         diagnostics = manifest["diagnostics"]
         warnings = manifest["warnings"]
         asset_bytes = sum(int(chunk["bytes"]) for chunk in manifest["chunks"])
