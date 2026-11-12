@@ -388,6 +388,31 @@ API):**
 - The caps bound the work spent on geometry: at most one rejected solid is
   meshed past the cap. They do not bound parsing the GDML itself.
 
+**Lazy loading (browser).**
+
+- At most 6 chunk requests are in flight (the "Parallel downloads" control,
+  1 to 32); the rest wait in a first-in-first-out queue, with a "N downloading,
+  M queued, K failed" line. On the real COCOA export (134 chunks, all loaded
+  at once) the browser never had more than 6 requests open.
+- Switching a layer off drops its queued requests and aborts the ones in
+  flight; a late response is discarded, so a hidden layer is never brought back
+  and no buffer is kept for it. Switching it on again simply requests it again.
+- A missing, truncated or corrupt chunk (HTTP error, bad header, sha256
+  mismatch) fails only its own layer: the row shows "failed (n)" with the URL and
+  reason on hover and a **Retry** button, "Retry failed chunks" retries all, and
+  other layers carry on. A retry bypasses the HTTP cache so a bad cached
+  response is not served again.
+- Memory accounting: the "GPU buffers (est.)" tile is loaded vertices times 21
+  bytes (position 12, colour 4, object id 4, visibility 1); the browser also
+  keeps a private copy of each loaded chunk's ids (4 bytes per vertex).
+- "GPU budget (MiB)" (0 = unlimited) evicts hidden-but-loaded layers, least
+  recently shown first, to stay under the budget. Visible layers are never
+  evicted: if they alone exceed it, the status line says so. With "Unload
+  hidden layers" on (the default) hidden layers are unloaded immediately anyway.
+- Not done: cancelling a request that has already finished downloading but is
+  still being parsed (the result is discarded afterwards), and automatic
+  retry with back-off (retry is manual).
+
 **Chunk size (`--lazy --chunk-vertices`) is nominal for one object only:**
 
 - Objects of one subsystem/layer are packed into parts in traversal order; a

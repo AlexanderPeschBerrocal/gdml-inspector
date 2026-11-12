@@ -163,10 +163,15 @@ class PageWatcher:
         self.problems = []
         page.on("console", self._console)
         page.on("pageerror", lambda exc: self._add(f"uncaught exception: {exc}"))
+        # The lazy viewer deliberately aborts a request for a layer that is
+        # switched off before its chunk arrives; that is cancellation, not a
+        # failure (test_lazy_loading_browser.py asserts the aborts explicitly).
         page.on(
             "requestfailed",
-            lambda request: self._add(
-                f"request failed: {request.url} ({request.failure})"
+            lambda request: (
+                None
+                if "ERR_ABORTED" in str(request.failure)
+                else self._add(f"request failed: {request.url} ({request.failure})")
             ),
         )
         page.on("response", self._response)
