@@ -50,6 +50,8 @@ def write_html(
             "standalone.html",
             {
                 "CLIPPING_JS": read_asset("clipping.js"),
+                "PICKING_JS": read_asset("picking.js"),
+                "INSPECTOR_JS": read_asset("inspector.js"),
                 "COMMON_JS": read_asset("common.js"),
                 "VIEWSTATE_JS": read_asset("viewstate.js"),
                 "TITLE": html.escape(Path(scene["meta"]["source"]).name),
