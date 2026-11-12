@@ -69,6 +69,7 @@ input[type=checkbox] { width: auto; }
 <div id="app">
 <aside>
   <h1>GDML Inspector</h1>
+  <div id="compat" class="warn" role="alert" style="display:none"></div>
   <div class="stat"><span>Source</span><b id="sourceName"></b></div>
   <div class="stat"><span>Objects</span><b id="objCount"></b></div>
   <div class="stat"><span>Triangles</span><b id="triCount"></b></div>
@@ -149,9 +150,14 @@ input[type=checkbox] { width: auto; }
 </div>
 <script>
 __CLIPPING_JS__
+__COMMON_JS__
 const SCENE = __SCENE__;
 const HIERARCHY = __HIERARCHY__;
 const SOLIDS = __SOLIDS__;
+{
+  const status = showSchemaStatus(schemaStatus(SCENE.meta.schemaVersion));
+  if (status.level === 'future') throw new Error(status.message);
+}
 const canvas = document.getElementById('gl');
 const gl = canvas.getContext('webgl', {antialias: true, alpha: false});
 if (!gl) alert('WebGL is not available in this browser.');

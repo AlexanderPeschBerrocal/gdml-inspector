@@ -171,6 +171,7 @@ def write_html(
         # Static shared code first: GDML-derived JSON inserted afterwards is
         # never scanned for template tokens.
         .replace("__CLIPPING_JS__", read_asset("clipping.js"))
+        .replace("__COMMON_JS__", read_asset("common.js"))
         .replace("__TITLE__", title)
         .replace(
             "__SCENE__", json.dumps(scene, separators=(",", ":")).replace("</", "<\\/")
@@ -229,6 +230,13 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--max-objects", type=int, default=100_000)
     parser.add_argument("--max-vertices", type=int, default=5_000_000)
+    parser.add_argument(
+        "--redact-paths",
+        action="store_true",
+        help="Omit the absolute source path from the HTML (the filename and "
+        "sha256 digest are kept); with the same explicit options and input the "
+        "output is then byte-for-byte reproducible",
+    )
     parser.add_argument(
         "--strict",
         action="store_true",
@@ -317,6 +325,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_objects=args.max_objects,
         max_vertices=args.max_vertices,
     )
+    builder.redact_paths = args.redact_paths
     scene = builder.build()
     meta = scene["meta"]
     if args.validate_only:

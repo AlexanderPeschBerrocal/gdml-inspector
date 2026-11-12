@@ -54,6 +54,18 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Export provenance and reproducibility. Every export now records
+  `schemaVersion: 2` and a `provenance` block (tool and backend versions, the
+  input's name and sha256, the resolved settings, units); lazy chunks record a
+  sha256 and the viewer verifies them. `--redact-paths` drops the absolute
+  source path while keeping filename and digest, and with explicit options
+  makes standalone and lazy output byte-for-byte reproducible across
+  directories (guarantee in `docs/limitations.md`). `--reuse-assets` now
+  refuses an edited same-named source, a changed explicit option, and missing,
+  truncated or corrupt chunks, instead of reusing them silently. Lazy chunk
+  URLs are percent-encoded so bundles load from any path, `--bundle` writes a
+  deterministic zip, and viewers give clear guidance for old or newer schema
+  versions. A first part of issue #10; saved view state follows separately.
 - Clipping in both viewers: x/y/z clipping planes (a min and a max on one axis
   make a slab), an arbitrary plane given by normal and offset, transverse/
   longitudinal/slab presets and reset, alongside the phi wedge. The two

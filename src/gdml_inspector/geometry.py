@@ -12,8 +12,12 @@ import xml.etree.ElementTree as ET
 from array import array
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _distribution_version
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
+
+from . import __version__
 
 if TYPE_CHECKING:
     from typing_extensions import NotRequired
@@ -511,6 +515,23 @@ def source_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+# Version of the scene/manifest metadata layout. 1 is everything exported
+# before issue #10 (no provenance block, no digests); 2 adds `provenance`
+# and, for lazy exports, per-chunk digests.
+SCHEMA_VERSION = 2
+
+
+def backend_version(backend_name: str) -> str:
+    """The tessellation backend's own version, recorded for provenance. The
+    pure-Python backend is part of this package, so it reports the tool's."""
+    if backend_name == "pyg4ometry":
+        try:
+            return _distribution_version("pyg4ometry")
+        except PackageNotFoundError:
+            return "unknown"
+    return __version__
+
+
 def little_endian_bytes(values: array) -> bytes:
     if sys.byteorder == "little":
         return values.tobytes()
@@ -684,6 +705,8 @@ def diagnostics_matching(
 
 
 class SceneMeta(TypedDict):
+    schemaVersion: int
+    provenance: dict[str, object]
     source: str
     sourceFile: str
     backend: str
@@ -711,6 +734,11 @@ class SceneDict(TypedDict):
 
 
 class GDMLSceneBuilder:
+    # Set by the CLIs after construction (adding a constructor parameter
+    # would ripple through every mixin's signature): omit the absolute
+    # source path from everything embedded in the output.
+    redact_paths: bool = False
+
     def __init__(
         self,
         gdml: Path,
@@ -1125,6 +1153,40 @@ class GDMLSceneBuilder:
             self.scene.bbox_max = [1, 1, 1]
         return self.to_dict()
 
+    def provenance(self, **extra_settings: object) -> dict[str, object]:
+        """Versioned provenance shared by every export: tool and backend
+        versions, the input file's name and sha256 (its absolute path only
+        when not redacted), the resolved build settings and the units.
+        Nothing here depends on the time or machine apart from `path`."""
+        source: dict[str, object] = {
+            "file": self.gdml.name,
+            "sha256": hashlib.sha256(self.gdml.read_bytes()).hexdigest(),
+        }
+        if not self.redact_paths:
+            source["path"] = str(self.gdml)
+        return {
+            "tool": {"name": "gdml-inspector", "version": __version__},
+            "backend": {
+                "name": self.backend_name,
+                "version": backend_version(self.backend_name),
+            },
+            "input": source,
+            "settings": {
+                "quality": self.quality,
+                "includeContainers": self.include_containers,
+                "includeWorld": self.include_world,
+                "maxObjects": self.max_objects,
+                "maxVertices": self.max_vertices,
+                **extra_settings,
+            },
+            "units": {"length": "mm", "angle": "rad"},
+        }
+
+    def source_label(self) -> str:
+        """The `source` value to embed: the path as given, or just the
+        filename when paths are redacted."""
+        return self.gdml.name if self.redact_paths else str(self.gdml)
+
     def to_dict(self) -> SceneDict:
         materials: dict[str, int] = {}
         material_colors: dict[str, list[int]] = {}
@@ -1143,7 +1205,9 @@ class GDMLSceneBuilder:
             )
         return {
             "meta": {
-                "source": str(self.gdml),
+                "schemaVersion": SCHEMA_VERSION,
+                "provenance": self.provenance(),
+                "source": self.source_label(),
                 "sourceFile": self.gdml.name,
                 "backend": self.backend_name,
                 "quality": self.quality,

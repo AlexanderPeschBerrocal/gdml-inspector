@@ -45,6 +45,7 @@ input[type=range] { width: 100%; }
 .swatch { width: 11px; height: 11px; border-radius: 2px; }
 #overlay { position: absolute; right: 12px; top: 12px; background: #091626dd; border: 1px solid #314761; border-radius: 8px; padding: 8px 10px; font-size: 11px; pointer-events: none; }
 #warnings { max-height: 160px; overflow: auto; }
+#compat { background: #3a2a10; border: 1px solid #8a5a16; border-radius: 6px; padding: 8px; margin: 8px 0; font-size: 12px; line-height: 1.4; }
 .diagnostic-row { margin: 4px 0; padding-bottom: 4px; border-bottom: 1px solid #2c4059; }
 .diagnostic-row:last-child { border-bottom: none; }
 .diagnostic-count { color: #8fa6c0; }
@@ -53,6 +54,7 @@ input[type=range] { width: 100%; }
 <body>
 <aside>
   <h1>GDML Inspector — Lazy</h1>
+  <div id="compat" role="alert" style="display:none"></div>
   <div class="muted" id="source"></div>
   <div class="stats">
     <div class="stat"><span>Total objects</span><b id="totalObjects"></b></div>
@@ -111,8 +113,13 @@ input[type=range] { width: 100%; }
 </main>
 <script>
 __CLIPPING_JS__
+__COMMON_JS__
 const MANIFEST = __MANIFEST__;
-const canvas = document.getElementById('canvas');
+const canvas = document.getElementById('canvas'); // must follow the manifest line: read_existing_manifest() locates its end by `;\nconst canvas = `
+{
+  const status = showSchemaStatus(schemaStatus(MANIFEST.schemaVersion));
+  if (status.level === 'future') throw new Error(status.message);
+}
 const gl = canvas.getContext('webgl', { antialias: true, alpha: false });
 if (!gl) throw new Error('WebGL is not available in this browser.');
 
@@ -236,6 +243,14 @@ async function loadChunk(chunk) {
     const response=await fetch(chunk.url);
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     const data=await response.arrayBuffer();
+    if (chunk.sha256) {
+      const actual=await sha256Hex(data);
+      if (actual!==null && actual!==chunk.sha256) {
+        const mismatch=new Error(`Chunk ${chunk.url} fails its recorded sha256 (expected ${chunk.sha256.slice(0,12)}…, got ${actual.slice(0,12)}…): it is corrupt or was edited after export.`);
+        mismatch.digest=true;
+        throw mismatch;
+      }
+    }
     const view=new DataView(data);
     const magic=String.fromCharCode(...new Uint8Array(data,0,8));
     if (magic!=='GDMLCHN1') throw new Error(`Bad chunk magic in ${chunk.url}`);
@@ -253,7 +268,9 @@ async function loadChunk(chunk) {
     state.loaded=true; state.visible=selectedLayers.has(chunk.baseKey); state.bytes=data.byteLength;
     updateStatus(`Loaded ${chunk.subsystem} / ${chunk.layer}.`, 'loaded');
   } catch (error) {
-    state.error=String(error); updateStatus(`Could not load ${chunk.url}.\n${error}\nUse --serve or another HTTP server; file:// cannot fetch lazy chunks.`, 'error');
+    state.error=String(error);
+    const hint=error && error.digest ? '' : '\nUse --serve or another HTTP server; file:// cannot fetch lazy chunks.';
+    updateStatus(`Could not load ${chunk.url}.\n${error}${hint}`, 'error');
   } finally {
     state.loading=false; updateStats(); requestRender();
   }
