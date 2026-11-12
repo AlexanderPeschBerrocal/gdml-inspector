@@ -541,7 +541,10 @@ const inspector = buildInspector(document.getElementById('details'), {
   emptyText: pickingSupported
     ? 'Click a point in the detector view.'
     : 'Picking is unavailable: this export predates per-object ids. Re-export with this version of gdml-inspector.',
-  actions: [[{id: 'detailFocus', label: 'Focus', onClick: info => focusOnPath(info.path)}]],
+  actions: [[
+    {id: 'detailFocus', label: 'Focus', onClick: info => focusOnPath(info.path)},
+    {id: 'detailIsolate', label: 'Isolate', onClick: info => toggleIsolate(info.path)},
+  ]],
 });
 let placements = null, placementsPromise = null;
 

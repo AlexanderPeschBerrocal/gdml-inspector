@@ -294,6 +294,14 @@ hidden".
 - Lazy clicks that move more than a few pixels count as a drag, not a pick.
 - The lazy viewer has no hierarchy tree yet, so there is no "show in
   hierarchy", focus or isolate on a lazy selection.
+- Translucency: opacity is display-only. A click selects the frontmost
+  surface under the cursor even when it is drawn translucent; there is no
+  click-through for translucent shells (hide or isolate the shell instead).
+- Measured on the real COCOA export (4.4 million vertices, all layers loaded)
+  in headless Chromium with *software* WebGL: one pick (a full id-buffer pass
+  plus readback) took about 0.2 s, and the first selection (placement fetch
+  excluded, tree built, inspector filled) about 0.7 s. Hardware GPUs are much
+  faster; the cost scales with the loaded vertex count, not the placement count.
 - Placement ids are encoded in 24 bits in the picking pass (about 16.7 million
   objects), far above the vertex budgets this tool accepts.
 - Highlighting is a colour tint on the selected object's own surface, not
@@ -362,10 +370,12 @@ hidden".
 - Union meshes can contain interior surfaces. Subtraction/intersection can look
   like the first operand in the Python backend or after backend fallback.
 - Mesh quality is polygonal approximation of curves, not a physical tolerance.
-- Single-file inspection samples projected vertices; it is not depth-correct
-  triangle picking. Transparency uses the inherited rendering approach.
+- Picking is depth-correct in both viewers (see "Object picking" above).
+  Transparency uses the inherited rendering approach: opacity is for display
+  only, so a click always selects the frontmost surface under the cursor, even
+  when it is drawn translucent; there is no click-through for translucent shells.
 - The lazy viewer groups objects by heuristics, not detector-provided hierarchy.
-  Its material list is a legend; it has no per-object picking or wireframe mode.
+  It has no wireframe mode.
 - Lazy mode precomputes the complete selected mesh in Python before writing it.
   It is lazy in browser transfer/rendering, not in Python preprocessing.
 - Object/vertex limits stop traversal, but the inherited single-file vertex

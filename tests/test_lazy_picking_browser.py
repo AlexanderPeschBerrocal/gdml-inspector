@@ -273,3 +273,118 @@ def test_a_v1_export_still_renders_and_reports_picking_unavailable(
     assert page.evaluate("selectedObjectId") is None
     # Still draws geometry: some canvas pixel differs from the clear colour.
     assert watched_page.problems == []
+
+
+def test_picking_is_correct_after_resize(watched_page, served, lazy_scene_dir):
+    page = open_lazy(watched_page, served, lazy_scene_dir)
+    page.set_viewport_size({"width": 700, "height": 500})
+    page.wait_for_function("canvas.height === 500")
+    next_frames(page)
+    click_object(page, "world/hcal_b")
+    assert selected(page) == "world/hcal_b"
+    click_object(page, "world/back")
+    assert selected(page) == "world/front"
+
+
+def test_picking_is_correct_at_high_device_pixel_ratio(served, lazy_scene_dir, browser):
+    context = browser.new_context(
+        viewport={"width": 900, "height": 700}, device_scale_factor=2
+    )
+    try:
+        page = context.new_page()
+        errors = []
+        page.on(
+            "console",
+            lambda msg: errors.append(msg.text) if msg.type == "error" else None,
+        )
+        page.goto(f"{served(lazy_scene_dir)}/v.html")
+        page.wait_for_selector("input[data-layer-key]")
+        page.click("#loadAll")
+        page.wait_for_function("Object.values(states).every(s => s.loaded)")
+        page.click("#viewXYPos")
+        page.evaluate("ensurePlacements()")
+        page.wait_for_function("placements !== null")
+        next_frames(page)
+        assert page.evaluate("window.devicePixelRatio") == 2
+        assert page.evaluate("canvas.width / canvas.clientWidth") == 2
+        click_object(page, "world/ecal_a")
+        assert selected(page) == "world/ecal_a"
+        click_object(page, "world/back")
+        assert selected(page) == "world/front"
+        assert errors == []
+    finally:
+        context.close()
+
+
+def test_picking_follows_zoom_and_pan(watched_page, served, lazy_scene_dir):
+    page = open_lazy(watched_page, served, lazy_scene_dir)
+    page.evaluate("dist *= 0.4; panX = 25; panY = -10; requestRender()")
+    next_frames(page)
+    # Objects still on screen after the move are picked at their new position.
+    click_object(page, "world/hcal_b")
+    assert selected(page) == "world/hcal_b"
+    page.evaluate("dist *= 2.5; panX = -20; panY = 5; requestRender()")
+    next_frames(page)
+    click_object(page, "world/ecal_a")
+    assert selected(page) == "world/ecal_a"
+
+
+def test_a_click_on_the_middle_of_a_large_face_selects_it(
+    watched_page, served, lazy_scene_dir
+):
+    page = open_lazy(watched_page, served, lazy_scene_dir)
+    # Zoom right in on the 20 x 20 mm front box: no vertex is anywhere near
+    # the cursor, which is what vertex-sampling picking got wrong.
+    page.evaluate(
+        "viewCenter = [0, 0, 100]; dist = 30; panX = panY = 0; requestRender()"
+    )
+    next_frames(page)
+    sx, sy = page.evaluate(_LAZY_PROJECT, [0, 0, 100])
+    page.mouse.click(sx, sy)
+    next_frames(page)
+    assert selected(page) == "world/front"
+
+
+def test_phi_clipped_geometry_is_not_picked_where_it_is_cut_away(
+    watched_page, served, lazy_scene_dir
+):
+    page = open_lazy(watched_page, served, lazy_scene_dir)
+    click_object(page, "world/hcal_b")  # +x side, phi near 0
+    assert selected(page) == "world/hcal_b"
+    page.evaluate("clearSelection()")
+    # Remove a wedge around +x: hcal_b is cut away, ecal_a (-x) is kept.
+    page.evaluate(
+        "setClipState({phi: {enabled: true, startDeg: -30, widthDeg: 60, mode: 'remove'}})"
+    )
+    next_frames(page)
+    click_object(page, "world/hcal_b")
+    assert page.evaluate("selectedObjectId") is None
+    click_object(page, "world/ecal_a")
+    assert selected(page) == "world/ecal_a"
+
+
+def test_translucent_surfaces_are_picked_like_opaque_ones(
+    watched_page, served, lazy_scene_dir
+):
+    page = open_lazy(watched_page, served, lazy_scene_dir)
+    page.evaluate(
+        "document.getElementById('opacity').value = 15;"
+        "document.getElementById('opacity').dispatchEvent(new Event('input'))"
+    )
+    next_frames(page)
+    # Documented: opacity is display-only, the frontmost surface is selected.
+    click_object(page, "world/back")
+    assert selected(page) == "world/front"
+
+
+def test_inspector_isolate_button_isolates_the_selection(
+    watched_page, served, lazy_scene_dir
+):
+    page = open_lazy(watched_page, served, lazy_scene_dir)
+    click_object(page, "world/hcal_b")
+    assert selected(page) == "world/hcal_b"
+    page.click("#detailIsolate")
+    assert page.evaluate("isolatedPath") == "world/hcal_b"
+    assert page.evaluate("[...visibleMask].reduce((a, b) => a + b, 0)") == 1
+    page.click("#detailIsolate")
+    assert page.evaluate("isolatedPath") is None
