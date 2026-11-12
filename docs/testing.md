@@ -42,7 +42,11 @@ uv run --no-sync pytest tests/test_*browser*.py \
 
 - **What is covered:** both programs' shaders link with no GL error; the
   camera presets, opacity, wireframe, axes, dark-mode, clipping, material and
-  hierarchy/picking/diagnostics controls (standalone); layer selection fetching
+  hierarchy/picking/diagnostics controls (standalone); lazy picking
+  (`test_lazy_picking_browser.py`: occlusion, clipping, unloaded layers,
+  highlight, selection surviving unload/reload, same placement as standalone
+  for the same view, saved-view round trip, corrupt placements file, v1
+  export); layer selection fetching
   chunks over real HTTP, unloading, keeping hidden chunks loaded, a reload round
   trip, and deselecting while a chunk is still loading, which must never leave
   stale visible geometry (lazy).
