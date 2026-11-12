@@ -59,8 +59,8 @@ suite is not a claim that those gaps have been fixed.
   viewers now render this structured list directly (filterable by severity
   and category, with a JSON download button), instead of only the older
   flattened `meta.warnings` strings.
-- "Show in hierarchy" (standalone viewer only, since lazy mode has no
-  hierarchy tree) is derived purely client-side from a diagnostic's `code`
+- "Show in hierarchy" (standalone viewer only; the lazy diagnostics panel has
+  no such link yet) is derived purely client-side from a diagnostic's `code`
   and (for `duplicate-definition`) `construct` -- not every diagnostic
   names something that still exists as a placement or solid (an
   unresolvable numeric expression's identifier is an attribute key, and a
@@ -145,11 +145,22 @@ suite is not a claim that those gaps have been fixed.
   suffixed name per placement), so this only affects hand-written fixtures
   with deliberately anonymous, repeated siblings.
 
-## Physical-volume hierarchy (standalone viewer)
+## Physical-volume hierarchy
 
-- Available in the standalone (`gdml-inspector`) viewer only. The lazy
-  viewer's manifest has no per-placement data today -- only subsystem/layer
-  chunk aggregates -- so it has no equivalent tree yet; see issue #2.
+- Both viewers share one tree component (`tree.js`). The lazy viewer builds it
+  from `placements.json`, on demand ("Load hierarchy", or automatically on the
+  first pick), so it lists every placement including those whose layer is not
+  loaded; its paths and order equal the standalone tree's for the same input.
+  Row click selects (with the inspector, and a highlight when the geometry is
+  shown), Focus frames the subtree, and search covers names, paths and solid
+  refs.
+- **Lazy has no hide/isolate or per-row checkboxes yet.** Hiding part of a
+  loaded layer needs a per-vertex visibility buffer, which is not built; a
+  standalone saved view's hidden/isolated placements are reported as not
+  applicable in the lazy viewer. Tree expansion and selection do round-trip.
+- A flat world is a flat tree: the real COCOA geometry has about 7,200
+  placements directly under the world, so expanding it renders that many rows
+  (about 0.7 s here). There is no virtualised scrolling.
 - Shares the glTF exporter's path-keying limitation above: two anonymous,
   identically-unnamed placements of the same volume under the same mother
   collide into one tree node.

@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from gdml_inspector import cli
 from gdml_inspector.server import create_server
+
+from .lazy_scene import GDML_TEXT, QUALITY
 
 # The browser tests need the optional `browser` dependency group (see
 # docs/testing.md); without it they are skipped at collection time rather
@@ -222,3 +225,39 @@ def webgl_renderer(browser):
     )
     print(f"WebGL renderer: {renderer}")
     return renderer
+
+
+@pytest.fixture(scope="module")
+def lazy_scene_gdml(tmp_path_factory):
+    directory = tmp_path_factory.mktemp("lazy-pick-src")
+    path = directory / "scene.gdml"
+    path.write_text(
+        GDML_TEXT,
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture(scope="module")
+def lazy_scene_dir(tmp_path_factory, lazy_scene_gdml):
+    directory = tmp_path_factory.mktemp("lazy-pick")
+    assert (
+        cli.main(
+            [
+                "--lazy",
+                str(lazy_scene_gdml),
+                *QUALITY,
+                "--out",
+                str(directory / "v.html"),
+            ]
+        )
+        == 0
+    )
+    return directory
+
+
+@pytest.fixture(scope="module")
+def lazy_scene_standalone(tmp_path_factory, lazy_scene_gdml):
+    out = tmp_path_factory.mktemp("lazy-pick-standalone") / "s.html"
+    assert cli.main([str(lazy_scene_gdml), *QUALITY, "--out", str(out)]) == 0
+    return out
