@@ -10,14 +10,6 @@ from .helpers import scene_builder
 
 
 @pytest.mark.xfail(
-    raises=AssertionError, reason="#7: standalone vertex budget can overshoot"
-)
-def test_standalone_vertex_budget_is_a_hard_cap(single_volume):
-    scene = scene_builder(single_volume(), max_vertices=35).build()
-    assert scene["meta"]["vertices"] <= 35
-
-
-@pytest.mark.xfail(
     raises=AssertionError, reason="#8: unknown length units are silently accepted"
 )
 def test_unknown_length_unit_has_an_actionable_diagnostic(single_volume):

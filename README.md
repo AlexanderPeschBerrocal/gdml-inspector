@@ -238,7 +238,7 @@ installations continue to use the package metadata independently of `uv.lock`.
 See the [contributor guide](docs/contributing.md) for individual groups, pip
 development setup, dependency updates, compatibility checks, and the branch/PR
 workflow. Development tools are no longer exposed as `.[dev]` or `.[test]`
-package extras. See [releasing.md](docs/releasing.md) for how a version is
+package extras. See [benchmarks](docs/benchmarks.md) for the stress generator, benchmark runner and a measured baseline, and [releasing.md](docs/releasing.md) for how a version is
 prepared, validated, and published.
 
 To enable local lint/format fixes before each commit:

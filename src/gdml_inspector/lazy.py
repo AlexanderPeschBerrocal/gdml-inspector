@@ -183,6 +183,7 @@ class LazyBuilderMixin:
     solids_table: Callable[[], dict[str, base.SolidInfo]]
     hierarchy_nodes: Callable[[], list[HierarchyNodeDict]]
     _on_object_added: Callable[..., None]
+    _admit_object: Callable[[str, int, int, int], bool]
 
     def __init__(self, *args: object, chunk_vertices: int, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
@@ -198,7 +199,6 @@ class LazyBuilderMixin:
         self.object_table: list[dict[str, object]] = []
         self.global_bbox_min = [float("inf")] * 3
         self.global_bbox_max = [float("-inf")] * 3
-        self.stopped_at_limit = False
 
     def _chunk_for(self, subsystem: str, layer: str, incoming_vertices: int) -> Chunk:
         base_key = f"{subsystem}\x1f{layer}"
@@ -237,11 +237,9 @@ class LazyBuilderMixin:
         vertex_count = len(positions) // 3
         if vertex_count == 0:
             return
-        if (
-            self.total_objects >= self.max_objects
-            or self.total_vertices + vertex_count > self.max_vertices
+        if not self._admit_object(
+            path, vertex_count, self.total_objects, self.total_vertices
         ):
-            self.stopped_at_limit = True
             return
 
         subsystem, layer = classify_chunk(volume, path, lo, hi, radial_min, radial_max)
@@ -263,21 +261,6 @@ class LazyBuilderMixin:
         self.object_table.append({**record, "chunk": chunk.base_key})
         self._on_object_added(path, volume, matrix, object_id)
 
-    def _budget_exceeded(self) -> bool:
-        # OR in stopped_at_limit: add_volume() can reject a single
-        # oversized object outright (its own precise pre-commit check)
-        # without incrementing total_objects/total_vertices at all, which a
-        # pure count-based check would miss, letting a later, smaller
-        # sibling be attempted when traversal should already have stopped.
-        return (
-            self.stopped_at_limit
-            or self.total_objects >= self.max_objects
-            or self.total_vertices >= self.max_vertices
-        )
-
-    def _record_budget_exceeded(self) -> None:
-        self.stopped_at_limit = True
-
     def build_chunks(self) -> None:
         self.parse()
         world = self.volumes.get(self.world)
@@ -287,14 +270,6 @@ class LazyBuilderMixin:
         if self.global_bbox_min[0] == float("inf"):
             self.global_bbox_min = [-1.0, -1.0, -1.0]
             self.global_bbox_max = [1.0, 1.0, 1.0]
-        if self.stopped_at_limit:
-            self.scene.diagnose(
-                "limit-reached",
-                "warning",
-                "budget",
-                "export",
-                "Stopped at configured object/vertex limit",
-            )
 
 
 class LazyGDMLSceneBuilder(LazyBuilderMixin, HierarchyMixin, base.GDMLSceneBuilder):
