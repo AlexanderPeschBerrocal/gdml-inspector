@@ -54,6 +54,19 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Benchmarks: `benchmarks/stress_gdml.py` (a deterministic synthetic scene
+  generator with repetition, flat/nested layouts and several lazy layers) and
+  `benchmarks/run_benchmarks.py` (preprocessing time, peak RSS, output bytes,
+  initial transfer and, with `--browser`, load time, frame rate, JS heap and
+  estimated GPU bytes), with a measured baseline in `docs/benchmarks.md`.
+
+- Changed: `--max-objects` and `--max-vertices` are hard caps with one rule in every
+  export mode: an object is admitted only if it fits whole, the first object
+  that does not fit ends the export (later smaller ones are not tried), and the
+  warning now says how much was exported and which placement it stopped before.
+  The standalone export no longer overshoots `--max-vertices` by its last
+  object. Reaching a cap exactly, with nothing left to place, no longer warns.
+  Chunk-size semantics (one oversized object gets its own part) are documented.
 - Lazy inspector: an Isolate button next to Focus. Lazy picking now has
   browser coverage for resize, high-DPI, zoom/pan, large-face centres,
   phi-clipped geometry and translucent surfaces; the docs state how
