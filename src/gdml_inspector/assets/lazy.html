@@ -41,7 +41,10 @@ input[type=range] { width: 100%; }
 .loading { color: #f4c76b; }
 .loaded { color: #74d99f; }
 .error { color: #ff8585; white-space: pre-wrap; }
-.material { display: grid; grid-template-columns: 12px 1fr auto; gap: 7px; align-items: center; font-size: 11px; margin: 3px 0; }
+.material-list { display: grid; gap: 4px; max-height: 230px; overflow: auto; padding-right: 4px; margin: 6px 0; }
+.material-item { display: grid; grid-template-columns: auto 14px 1fr auto; gap: 7px; align-items: center; font-size: 11px; }
+#filterPanel input:not([type=checkbox]), #filterPanel select { width: 100%; margin: 3px 0; }
+#filterSummary, #filterCounts { margin: 4px 0; }
 .swatch { width: 11px; height: 11px; border-radius: 2px; }
 #overlay { position: absolute; right: 12px; top: 12px; background: #091626dd; border: 1px solid #314761; border-radius: 8px; padding: 8px 10px; font-size: 11px; pointer-events: none; }
 #warnings { max-height: 160px; overflow: auto; }
@@ -127,8 +130,8 @@ input[type=range] { width: 100%; }
   <h2>Picked Object</h2>
   <div id="details"></div>
 
-  <h2>Materials</h2>
-  <div id="materials"></div>
+  <h2>Filter</h2>
+  <div id="filterPanel"></div>
   <h2>Warnings</h2>
   <div class="row">
     <select id="diagnosticSeverity"></select>
@@ -149,6 +152,7 @@ input[type=range] { width: 100%; }
 <script>
 __CLIPPING_JS__
 __PICKING_JS__
+__FILTERS_JS__
 __TREE_JS__
 __INSPECTOR_JS__
 __COMMON_JS__
@@ -337,6 +341,7 @@ function unloadChunk(chunk) {
 }
 function updateStatus(text, cls='') { const el=document.getElementById('status'); el.textContent=text; el.className=`muted ${cls}`; }
 function updateStats() {
+  if (typeof updateFilterCounts === 'function') updateFilterCounts();
   const loaded=Object.values(states).filter(s=>s.loaded);
   document.getElementById('loadedChunks').textContent=`${loaded.length}/${MANIFEST.chunks.length}`;
   document.getElementById('loadedBytes').textContent=formatBytes(loaded.reduce((s,x)=>s+x.bytes,0));
@@ -487,9 +492,41 @@ document.getElementById('opacity').addEventListener('input',requestRender);
 document.getElementById('loadAll').onclick=async()=>{ for(const check of document.querySelectorAll('input[data-layer-key]'))check.checked=true; for(const key of Object.keys(grouped).flatMap(s=>Object.keys(grouped[s]).map(l=>`${s}\x1f${l}`)))await setLayer(key,true); };
 document.getElementById('hideAll').onclick=async()=>{ for(const check of document.querySelectorAll('input[data-layer-key]'))check.checked=false; for(const key of [...selectedLayers])await setLayer(key,false); };
 
-function renderMaterials() {
-  const root=document.getElementById('materials');
-  root.innerHTML=Object.entries(MANIFEST.materials).map(([name,count])=>{const c=MANIFEST.materialColors[name]||[128,128,128,255];return `<div class="material"><span class="swatch" style="background:rgba(${c[0]},${c[1]},${c[2]},${Math.max(c[3]/255,.35)})"></span><span title="${escapeHtml(name)}">${escapeHtml(name)}</span><span>${count.toLocaleString()}</span></div>`;}).join('');
+// The shared filter panel (see assets/filters.js). Filters are evaluated from
+// placements.json, never from chunks, so they work for layers that are not
+// loaded; the first change fetches that file (digest-checked) if needed.
+const filterPanel = buildFilterPanel(document.getElementById('filterPanel'), {
+  materials: Object.entries(MANIFEST.materials).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([name, count]) => {
+    const c = MANIFEST.materialColors[name] || [128, 128, 128, 255];
+    return {name, count, color: `rgba(${c[0]},${c[1]},${c[2]},${Math.max(c[3] / 255, .35)})`};
+  }),
+  solidTypes: Object.keys(MANIFEST.solidTypes || {}).sort(),
+  onChange: () => filtersChanged(),
+});
+async function filtersChanged() {
+  if (!pickingSupported) {
+    updateStatus('Filters need the placement metadata: this export predates it. Re-export with this version of gdml-inspector.', 'error');
+    return;
+  }
+  if (!placements && !filterIsActive(filterPanel.state())) return;
+  if (!await ensurePlacements()) return;
+  recomputeVisibility();
+}
+// Matched = placements the filter selects (all of them, loaded or not);
+// shown = those that are also not hidden by the hierarchy and whose layer is
+// loaded and visible.
+function updateFilterCounts() {
+  if (!placements || !visibleMask) { filterPanel.setCounts(null); return; }
+  const shownLayers = new Set(MANIFEST.chunks.filter(c => states[c.key].loaded && states[c.key].visible).map(c => c.baseKey));
+  let matched = 0, shown = 0;
+  placements.objects.forEach((object, id) => {
+    if (filterMatchMask[id]) matched++;
+    if (visibleMask[id] && shownLayers.has(object.chunk)) shown++;
+  });
+  filterPanel.setCounts({
+    total: placements.objects.length, matched, shown,
+    hiddenReason: 'These placements match, but nothing is shown: hide/isolate in the hierarchy excludes them, or their layers are not loaded (use the layer toggles or Load all).',
+  });
 }
 
 // --- Picking, selection and the placement inspector ---
@@ -584,6 +621,7 @@ async function selectPath(path) {
 const hierarchyHidden = new Set();
 let isolatedPath = null;
 let visibleMask = null; // Uint8Array over object ids, once placements are known
+let filterMatchMask = null; // 1 where the filter selects the placement
 function uploadVisibility(buffers) {
   if (!buffers.ids) return; // constant "visible"
   const vis = new Uint8Array(buffers.count);
@@ -599,13 +637,17 @@ function recomputeVisibility() {
   if (!placements) return;
   const objects = placements.objects;
   if (!visibleMask || visibleMask.length !== objects.length) visibleMask = new Uint8Array(objects.length);
+  if (!filterMatchMask || filterMatchMask.length !== objects.length) filterMatchMask = new Uint8Array(objects.length);
+  const matches = compileFilter(filterPanel.state());
   for (let id = 0; id < objects.length; id++) {
-    visibleMask[id] = (!hierarchyHidden.has(id)
+    filterMatchMask[id] = matches(objects[id]) ? 1 : 0;
+    visibleMask[id] = (filterMatchMask[id] && !hierarchyHidden.has(id)
       && (isolatedPath === null || pathIsDescendantOrSelf(objects[id].path, isolatedPath))) ? 1 : 0;
   }
   for (const state of Object.values(states)) if (state.buffers) uploadVisibility(state.buffers);
   if (selectedObjectId !== null && !visibleMask[selectedObjectId]) clearSelection();
   if (hierarchyTree) hierarchyTree.refreshStates();
+  updateFilterCounts();
   requestRender();
 }
 function setSubtreeHidden(path, hidden) {
@@ -719,7 +761,7 @@ canvas.addEventListener('click', e => {
 // Shared clipping state (see assets/clipping.js).
 let clipData=null;
 buildClipPanel(document.getElementById('clipPanel'),{bbox:MANIFEST.bbox,onChange:data=>{clipData=data;requestRender();}});
-buildTree(); renderMaterials(); updateStats(); requestRender();
+buildTree(); updateStats(); requestRender();
 
 // --- Saved view state (see assets/viewstate.js) ---
 function captureViewSections() {
@@ -739,6 +781,7 @@ function captureViewSections() {
       selectedPath,
       search: document.getElementById('hierarchySearch').value,
     },
+    filters: filterPanel.state(),
     layers: {
       selected: [...selectedLayers].sort().map(key => {
         const [subsystem, layer] = key.split('\x1f');
@@ -750,7 +793,6 @@ function captureViewSections() {
 async function applyViewSections(state, report) {
   const input = document.getElementById.bind(document);
   const fire = (id, type) => input(id).dispatchEvent(new Event(type, {bubbles: true}));
-  if (state.filters) report.ignored.push('filters');
   if (state.display) {
     const d = state.display;
     if (d.opacity !== undefined) { input('opacity').value = d.opacity; fire('opacity', 'input'); }
@@ -768,6 +810,17 @@ async function applyViewSections(state, report) {
   }
   if (state.projection) report.applied.push('projection');
   if (state.clipping) { setClipState(state.clipping); report.applied.push('clipping'); }
+  if (state.filters) {
+    report.unknown.push(...filterPanel.set(state.filters));
+    if (!pickingSupported) {
+      if (filterIsActive(state.filters)) report.ignored.push('filters');
+    } else {
+      report.applied.push('filters');
+      if (filterIsActive(state.filters) || placements) {
+        if (await ensurePlacements()) recomputeVisibility();
+      }
+    }
+  }
   if (state.layers) {
     for (const check of layerChecks.values()) check.checked = false;
     for (const key of [...selectedLayers]) await setLayer(key, false);

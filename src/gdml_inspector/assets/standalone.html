@@ -97,15 +97,11 @@ input[type=checkbox] { width: auto; }
   <h2>Clipping</h2>
   <div id="clipPanel"></div>
   <h2>Filter</h2>
-  <input id="search" placeholder="Search name, material, solid...">
-  <select id="solidType"></select>
+  <div id="filterPanel"></div>
   <h2>Hierarchy</h2>
   <input id="hierarchySearch" placeholder="Search volume, placement, path...">
   <div class="row"><button id="hierarchyClearIsolation" style="display:none">Clear isolation</button></div>
   <div id="hierarchyTree" aria-label="Physical volume hierarchy"></div>
-  <h2>Materials</h2>
-  <div class="small-actions"><button id="allMaterials">All</button><button id="noMaterials">None</button></div>
-  <div id="materials"></div>
   <h2>Picked Object</h2>
   <div id="details"></div>
   <h2>Accuracy Notes</h2>
@@ -127,6 +123,7 @@ input[type=checkbox] { width: auto; }
 <script>
 __CLIPPING_JS__
 __PICKING_JS__
+__FILTERS_JS__
 __TREE_JS__
 __INSPECTOR_JS__
 __COMMON_JS__
@@ -162,39 +159,26 @@ for (let i=0; i<colorsRaw.length; i++) colors[i] = colorsRaw[i] / 255;
 const visible = new Float32Array(ids.length);
 visible.fill(1);
 let objectVisible = SCENE.objects.map(() => 1);
-const materialNames = Object.keys(SCENE.meta.materials).sort();
-const materialEnabled = Object.fromEntries(materialNames.map(name => [name, true]));
-
 function fillSelect(id, title, values) {
   const el = document.getElementById(id);
   el.innerHTML = `<option value="">All ${escapeHtml(title)}</option>`
     + values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
 }
-fillSelect('solidType', 'solid types', Object.keys(SCENE.meta.solidTypes).sort());
 
 function materialColor(name) {
   const c = (SCENE.meta.materialColors && SCENE.meta.materialColors[name]) || [128,128,128,200];
   return `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${Math.max(c[3] / 255, 0.35)})`;
 }
-function renderMaterialToggles() {
-  const box = document.getElementById('materials');
-  box.className = 'material-list';
-  box.innerHTML = materialNames.map(name => `
-    <label class="material-item">
-      <input type="checkbox" data-material="${escapeHtml(name)}" ${materialEnabled[name] ? 'checked' : ''}>
-      <span class="swatch" style="background:${materialColor(name)}"></span>
-      <span title="${escapeHtml(name)}">${escapeHtml(name)}</span>
-      <span>${SCENE.meta.materials[name].toLocaleString()}</span>
-    </label>
-  `).join('');
-  box.querySelectorAll('input[data-material]').forEach(input => {
-    input.addEventListener('change', () => {
-      materialEnabled[input.dataset.material] = input.checked;
-      applyFilters();
-    });
-  });
-}
-renderMaterialToggles();
+// The shared filter panel (see assets/filters.js): search, exclude, solid type,
+// materials and invert, evaluated from placement metadata.
+const filterPanel = buildFilterPanel(document.getElementById('filterPanel'), {
+  materials: Object.keys(SCENE.meta.materials).sort().map(name => ({
+    name, count: SCENE.meta.materials[name], color: materialColor(name),
+  })),
+  solidTypes: Object.keys(SCENE.meta.solidTypes).sort(),
+  onChange: () => applyFilters(),
+});
+const materialNames = filterPanel.materialNames;
 
 // --- Diagnostics panel ("Accuracy Notes") ---------------------------------
 // SCENE.meta.diagnostics/diagnosticSummary already carry everything this
@@ -567,32 +551,23 @@ document.getElementById('darkMode').addEventListener('change', e => {
   document.body.classList.toggle('dark', e.target.checked);
   updateWireColors();
 });
-document.getElementById('allMaterials').onclick = () => {
-  materialNames.forEach(name => materialEnabled[name] = true);
-  renderMaterialToggles();
-  applyFilters();
-};
-document.getElementById('noMaterials').onclick = () => {
-  materialNames.forEach(name => materialEnabled[name] = false);
-  renderMaterialToggles();
-  applyFilters();
-};
-
 function applyFilters() {
-  const q = document.getElementById('search').value.toLowerCase();
-  const solid = document.getElementById('solidType').value;
+  const matches = compileFilter(filterPanel.state());
+  let matched = 0;
   objectVisible = SCENE.objects.map((o, id) => {
+    const match = matches(o);
+    if (match) matched++;
     if (hierarchyHidden.has(id)) return 0;
     if (isolatedPath && !pathIsDescendantOrSelf(o.path, isolatedPath)) return 0;
-    return (materialEnabled[o.material] !== false) && (!solid || o.solidType === solid) && (!q || JSON.stringify(o).toLowerCase().includes(q)) ? 1 : 0;
+    return match ? 1 : 0;
   });
+  filterPanel.setCounts({total: SCENE.objects.length, matched, shown: objectVisible.reduce((a, b) => a + b, 0)});
   for (let i=0; i<ids.length; i++) visible[i] = objectVisible[ids[i]];
   gl.bindBuffer(gl.ARRAY_BUFFER, visibleBuf); gl.bufferData(gl.ARRAY_BUFFER, visible, gl.DYNAMIC_DRAW);
   updateWireVisibility();
   updateAllRowStates();
   if (selectedObjectId !== null && !objectVisible[selectedObjectId]) clearSelection();
 }
-['search','solidType'].forEach(id => document.getElementById(id).addEventListener('input', applyFilters));
 
 canvas.addEventListener('click', e => {
   const rect = canvas.getBoundingClientRect();
@@ -736,11 +711,7 @@ function captureViewSections() {
       theme: document.body.classList.contains('dark') ? 'dark' : 'light',
     },
     clipping: getClipState(),
-    filters: {
-      disabledMaterials: materialNames.filter(name => materialEnabled[name] === false),
-      solidType: input('solidType').value,
-      search: input('search').value,
-    },
+    filters: filterPanel.state(),
     hierarchy: {
       hiddenPaths: [...hierarchyHidden].map(id => SCENE.objects[id].path).sort(),
       expandedPaths: [...expandedPaths].sort(),
@@ -773,19 +744,7 @@ async function applyViewSections(state, report) {
   if (state.projection) report.applied.push('projection');
   if (state.clipping) { setClipState(state.clipping); report.applied.push('clipping'); }
   if (state.filters) {
-    const f = state.filters;
-    materialNames.forEach(name => { materialEnabled[name] = true; });
-    for (const name of f.disabledMaterials) {
-      if (name in materialEnabled) materialEnabled[name] = false;
-      else report.unknown.push({kind: 'material', value: name});
-    }
-    renderMaterialToggles();
-    const select = input('solidType');
-    if (f.solidType && ![...select.options].some(o => o.value === f.solidType)) {
-      report.unknown.push({kind: 'solid type', value: f.solidType});
-      select.value = '';
-    } else select.value = f.solidType;
-    input('search').value = f.search;
+    report.unknown.push(...filterPanel.set(state.filters));
     report.applied.push('filters');
   }
   if (state.hierarchy) {

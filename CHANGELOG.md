@@ -54,6 +54,15 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Unified object filters in both viewers (`filters.js`): literal search with
+  optional `material:`/`volume:`/`name:`/`path:`/`solid:`/`type:` scopes,
+  exclude, solid type, material toggles and invert, combined with AND, with an
+  active-filter summary, matched-versus-shown counts, an explanation of an
+  empty selection and Reset all. The lazy viewer evaluates them from
+  `placements.json`, so they work on unloaded layers without fetching chunks;
+  the lazy manifest gains `solidTypes`. Filters are saved in and restored from
+  view-state files in both viewers. The standalone text search now matches a
+  defined set of identifier fields rather than any text in the object's JSON.
 - Lazy viewer: hide and isolate (row checkboxes, Isolate, Clear isolation)
   through a per-vertex visibility buffer built from the chunk ids. It affects
   drawing and picking, survives unloading a layer, and hidden/isolated

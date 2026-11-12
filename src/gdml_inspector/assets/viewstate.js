@@ -89,9 +89,16 @@ function validateViewState(raw, bbox) {
   }
   if (doc.filters !== undefined) {
     const f = doc.filters;
-    if (!f || !viewIsStringList(f.disabledMaterials || []) || (f.solidType !== undefined && typeof f.solidType !== 'string') || (f.search !== undefined && typeof f.search !== 'string')) {
-      errors.push('"filters" needs disabledMaterials (list of names), solidType and search (strings).');
-    } else state.filters = {disabledMaterials: (f.disabledMaterials || []).slice(), solidType: f.solidType || '', search: f.search || ''};
+    const text = key => f[key] !== undefined && typeof f[key] !== 'string';
+    if (!f || !viewIsStringList(f.disabledMaterials || []) || text('solidType') || text('search') || text('exclude')
+      || (f.invert !== undefined && typeof f.invert !== 'boolean')) {
+      errors.push('"filters" needs disabledMaterials (list of names), solidType, search and exclude (strings) and invert (boolean).');
+    } else {
+      state.filters = {
+        disabledMaterials: (f.disabledMaterials || []).slice(),
+        solidType: f.solidType || '', search: f.search || '', exclude: f.exclude || '', invert: f.invert === true,
+      };
+    }
   }
   if (doc.hierarchy !== undefined) {
     const h = doc.hierarchy;
