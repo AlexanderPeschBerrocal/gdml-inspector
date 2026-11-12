@@ -82,6 +82,16 @@ and the control panel itself, so both viewers show identical controls and
 cannot drift apart. `getClipState()`/`setClipState()` are the hooks a future
 saved-view feature (issue #10) can use.
 
+Saved views follow the same pattern: `assets/viewstate.js` owns the file
+schema (`format`/`version`, a migration table), complete validation before any
+change is made, the Save/Load panel, and the report of stale entries, while each
+template supplies only `capture()` and `apply()` for the controls it has.
+`assets/common.js` holds the schema-compatibility guard and digest helper.
+Templates are filled by `_assets.render_template()` in a single pass over the
+placeholders, so GDML-derived JSON inserted for one token is never rescanned for
+another (a material named `__SCENE__` used to be replaced in the standalone
+export).
+
 The standalone viewer's object picking (`assets/standalone.html`) uses a
 WebGL1 ID buffer rather than vertex sampling: every triangle's object id is
 encoded as a colour and drawn, once per click, into an offscreen

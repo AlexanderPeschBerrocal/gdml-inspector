@@ -128,6 +128,11 @@ e.g. `--fail-on budget` to also fail on a truncated export. A `--strict`
 export without `--validate-only` still writes its output for inspection; it
 just does not exit 0.
 
+"Save view" in either viewer writes a `.view.json` (camera, filters, selection,
+clipping, theme, keyed by placement path rather than numeric id); "Load view"
+restores it and reports any entries that no longer exist, and `--view-state
+FILE` embeds one as the initial view. See `docs/limitations.md`.
+
 Exports record their provenance (tool/backend versions, input name and sha256,
 resolved settings, units). Add `--redact-paths` before sharing an artifact to
 drop the absolute source path while keeping the filename and digest; with

@@ -17,15 +17,15 @@ from array import array
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from importlib.resources import files
 from pathlib import Path
 from urllib.parse import quote, unquote
 
 from . import __version__
 from . import geometry as base
-from ._assets import read_asset
+from ._assets import read_asset, render_template
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder
 from .server import serve_file
+from .viewstate import load_view_state, stale_warning
 
 MAGIC = b"GDMLCHN1"
 FORMAT_VERSION = 1
@@ -373,18 +373,19 @@ def write_assets(
 
 
 def write_html(manifest: dict, output: Path) -> None:
-    title = html.escape(str(manifest["sourceFile"]))
-    manifest_json = json.dumps(manifest, separators=(",", ":")).replace("</", "<\\/")
     output.write_text(
-        files("gdml_inspector.assets")
-        .joinpath("lazy.html")
-        .read_text(encoding="utf-8")
-        # Static shared code first: GDML-derived JSON inserted afterwards is
-        # never scanned for template tokens.
-        .replace("__CLIPPING_JS__", read_asset("clipping.js"))
-        .replace("__COMMON_JS__", read_asset("common.js"))
-        .replace("__TITLE__", title)
-        .replace("__MANIFEST__", manifest_json),
+        render_template(
+            "lazy.html",
+            {
+                "CLIPPING_JS": read_asset("clipping.js"),
+                "COMMON_JS": read_asset("common.js"),
+                "VIEWSTATE_JS": read_asset("viewstate.js"),
+                "TITLE": html.escape(str(manifest["sourceFile"])),
+                "MANIFEST": json.dumps(manifest, separators=(",", ":")).replace(
+                    "</", "<\\/"
+                ),
+            },
+        ),
         encoding="utf-8",
     )
 
@@ -586,6 +587,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Rewrite and optionally serve an existing output HTML without rebuilding its binary chunks",
     )
     parser.add_argument(
+        "--view-state",
+        type=Path,
+        default=None,
+        metavar="FILE.view.json",
+        help="Embed a saved view (the viewer's Save view button) as the "
+        "initial camera, filters, selection, clipping and theme",
+    )
+    parser.add_argument(
         "--redact-paths",
         action="store_true",
         help="Omit the absolute source path from the output (the filename and "
@@ -638,6 +647,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.gdml.is_file():
         print(f"GDML file not found: {args.gdml}", file=sys.stderr)
         return 2
+    view_state = None
+    if args.view_state is not None:
+        try:
+            view_state = load_view_state(args.view_state)
+        except ValueError as exc:
+            print(f"gdml-inspector-lazy: --view-state: {exc}", file=sys.stderr)
+            return 2
     output = args.out or (Path(tempfile.gettempdir()) / f"{args.gdml.stem}.lazy.html")
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -666,6 +682,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             manifest["defaultLoad"] = list(args.default_load)
         if args.redact_paths:
             redact_manifest(manifest)
+        if view_state is not None:
+            manifest["viewState"] = view_state
         write_html(manifest, output)
         if args.bundle is not None:
             write_bundle(manifest, output, args.bundle)
@@ -716,6 +734,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     else:
         manifest = write_assets(builder, output, args.default_load)
+        if view_state is not None:
+            digest = str(manifest["provenance"]["input"]["sha256"])
+            note = stale_warning(view_state, digest)
+            if note:
+                print(f"Warning: {note}.", file=sys.stderr)
+            manifest["viewState"] = view_state
         write_html(manifest, output)
         if args.bundle is not None:
             write_bundle(manifest, output, args.bundle)

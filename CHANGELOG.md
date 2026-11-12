@@ -54,6 +54,15 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Saved view state in both viewers. "Save view" writes a versioned
+  `.view.json` (camera, projection, opacity, axes, clipping and, per viewer:
+  filters, hidden/isolated/selected placements and tree state, or the selected
+  layers; theme and wireframe in the standalone viewer); "Load view" restores
+  it deterministically and lists any placement, material, solid type or layer
+  that no longer exists, plus a warning if it was saved for different geometry.
+  Files are validated completely first, so an invalid or newer-version file is
+  rejected with the reason and changes nothing. `--view-state FILE` embeds a
+  view as the initial state at export time. Completes issue #10.
 - Export provenance and reproducibility. Every export now records
   `schemaVersion: 2` and a `provenance` block (tool and backend versions, the
   input's name and sha256, the resolved settings, units); lazy chunks record a
@@ -114,6 +123,10 @@ process (issue #22) this now builds on top of this policy.
 
 ### Fixed
 
+- HTML templates were filled by sequential string replacement, so GDML-derived
+  JSON inserted for one placeholder was then scanned for the next: a material
+  or placement named like a placeholder (for example `__SCENE__`) was replaced
+  inside the embedded data. Templates are now filled in a single pass.
 - The standalone viewer injected GDML-controlled names (material names,
   the warnings list, and the hierarchy tree's placement/volume labels)
   into the page as unescaped HTML. A material, volume, or placement name
