@@ -172,9 +172,41 @@ suite is not a claim that those gaps have been fixed.
 - The tree expands incrementally (an unexpanded subtree adds no rows to the
   DOM) rather than using virtualised/windowed scrolling, which the
   underlying roadmap issue allows as an alternative for large trees.
-- Hide/isolate cooperate with the existing material, solid-type, and
-  free-text filters; there is no clipping filter yet for it to cooperate
-  with (see the roadmap for `#5`).
+- Hide/isolate combine with the object filters below (AND): an object is
+  shown only if the filter selects it and the hierarchy does not hide it.
+
+## Object filters (both viewers)
+
+One filter model (`filters.js`) and panel serve both viewers, so the same
+filter selects the same placements in each (tested on the same scene).
+
+- **Composition:** search, exclude, solid type and materials combine with AND.
+  A placement is included unless its material is switched off; `exclude` beats
+  everything else; "Invert selection" complements the final result. Hide/isolate
+  from the hierarchy then apply on top.
+- **Matching is literal**, case-insensitive substring matching, on original
+  identifiers (Geant4 address suffixes kept) and their suffix-stripped forms.
+  A term may be scoped with `material:`, `volume:`, `name:`, `path:`, `solid:`
+  or `type:`; any other text, including an unknown `prefix:` and regex
+  characters, is a plain substring. `path:` and `name:` tell two placements of
+  one logical volume apart; `volume:` matches both. There is no regex or
+  wildcard mode yet; one would have to be an explicit opt-in.
+- **Materials are matched by name**, never by rendering colour; the toggles are
+  exact, the search is substring (so `material:G4_Fe` also matches `G4_Fe2`).
+- **No geometry needed.** The lazy viewer evaluates filters from
+  `placements.json` (fetched and digest-checked on first use) and never
+  fetches a chunk to do so; a filter can match placements whose layers are not
+  loaded. The panel reports "matched of total" and "shown" separately and
+  explains an empty result (nothing matches, or matches are hidden/not loaded).
+- Changing or resetting a filter clears a selection that it filters away.
+- The standalone text search is now a defined set of fields (path, name,
+  volume, material, solid, solid type) instead of any substring of the object's
+  JSON, so numbers such as bounding-box values no longer match.
+- Lazy exports made before this change have no `solidTypes` in the manifest,
+  so the solid-type menu is empty until re-exported (other filters work).
+- Not done: optional user-defined subsystem groups or a sidecar configuration
+  (the lazy layer heuristics are unchanged), and saved selections other than
+  as part of a saved view.
 
 ## Clipping (both viewers)
 
@@ -212,10 +244,11 @@ it wins over `--default-load`). The file is versioned (`format`, `version: 1`)
 and records: camera (yaw, pitch, distance, pan, up, view centre), the
 projection (always perspective, 45 degrees, recorded explicitly), opacity,
 axes, the full clipping state, and the geometry it was saved for (schema
-version, input sha256, filename). Standalone adds wireframe, theme, material
-toggles, solid-type and text filters, hidden and isolated placements, the
-selected placement and the hierarchy tree's expansion and search. Lazy adds the
-selected subsystem/layers and "unload hidden".
+version, input sha256, filename). Both save the object filters (search,
+exclude, solid type, materials, invert), hidden and isolated placements, the
+selected placement and the hierarchy tree's expansion and search. Standalone
+adds wireframe and theme; lazy adds the selected subsystem/layers and "unload
+hidden".
 
 - **Stable identifiers:** placements are stored by path and layers by
   subsystem/layer name, never by numeric id, so a view survives a re-export.
@@ -233,9 +266,9 @@ selected subsystem/layers and "unload hidden".
 - **Versions:** only version 1 exists, so there is nothing to migrate yet; the
   validator has a migration table, and a newer file is refused with guidance to
   update gdml-inspector or re-save.
-- **Across viewers:** a standalone view loaded in the lazy viewer applies only
-  what both share (camera, projection, opacity, axes, clipping) and says what
-  it ignored, and vice versa.
+- **Across viewers:** a view loaded in the other viewer applies what both
+  share (camera, projection, opacity, axes, clipping, filters, hierarchy) and
+  says what it ignored (wireframe and theme in lazy; layers in standalone).
 - **Not saved:** material colours (fixed by the backend, not user-editable),
   the diagnostics filters, and the scroll position of the hierarchy tree. Lazy layer names come from this
   tool's heuristic classification, so a changed classification can make a layer

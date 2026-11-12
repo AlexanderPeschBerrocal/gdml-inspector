@@ -417,6 +417,9 @@ def write_assets(
         "chunks": chunk_entries,
         "materials": dict(sorted(builder.material_counts.items())),
         "materialColors": material_colors,
+        "solidTypes": dict(
+            sorted(Counter(str(o["solidType"]) for o in builder.object_table).items())
+        ),
         "warnings": base.format_warnings(builder.scene.diagnostics),
         "diagnostics": base.diagnostics_list(builder.scene.diagnostics),
         "diagnosticSummary": base.diagnostics_summary(builder.scene.diagnostics),
@@ -431,6 +434,7 @@ def write_html(manifest: dict, output: Path) -> None:
             {
                 "CLIPPING_JS": read_asset("clipping.js"),
                 "PICKING_JS": read_asset("picking.js"),
+                "FILTERS_JS": read_asset("filters.js"),
                 "TREE_JS": read_asset("tree.js"),
                 "INSPECTOR_JS": read_asset("inspector.js"),
                 "COMMON_JS": read_asset("common.js"),
