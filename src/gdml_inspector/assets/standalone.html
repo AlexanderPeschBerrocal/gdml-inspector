@@ -127,6 +127,7 @@ input[type=checkbox] { width: auto; }
 <script>
 __CLIPPING_JS__
 __PICKING_JS__
+__TREE_JS__
 __INSPECTOR_JS__
 __COMMON_JS__
 __VIEWSTATE_JS__
@@ -601,192 +602,37 @@ canvas.addEventListener('click', e => {
   selectObject(pickAt(devX, devY));
 });
 
-// --- Physical-volume hierarchy ------------------------------------------
+// --- Physical-volume hierarchy (see assets/tree.js) ----------------------
 // Built from HIERARCHY, a flat pre-order list of every placement (rendered
-// or not) keyed by path, independent of SCENE.objects; see
-// HierarchyMixin in standalone.py. Unexpanded subtrees never reach the
-// DOM, so a large tree only costs what the user actually opens.
-const nodeByPath = Object.fromEntries(HIERARCHY.map(n => [n.path, n]));
-const childrenByPath = {};
-for (const node of HIERARCHY) {
-  if (node.parentPath !== null) {
-    (childrenByPath[node.parentPath] ||= []).push(node.path);
-  }
-}
+// or not) keyed by path, independent of SCENE.objects; see HierarchyMixin in
+// hierarchy.py. Unexpanded subtrees never reach the DOM.
 const worldPath = SCENE.meta.world;
 const approximatedSolids = new Set(
   SCENE.meta.diagnostics.filter(d => d.category === 'unsupported').map(d => d.identifier)
 );
-const expandedPaths = new Set([worldPath]);
 const hierarchyHidden = new Set();
 let isolatedPath = null;
 let selectedPath = null;
-let lastFocusedPath = null;
-const rowElements = new Map();
 
-function hasChildren(path) { return (childrenByPath[path] || []).length > 0; }
-function pathIsDescendantOrSelf(path, ancestorPath) {
-  return path === ancestorPath || path.startsWith(ancestorPath + '/');
-}
-function subtreeObjectIds(path) {
-  const out = [];
-  const node = nodeByPath[path];
-  if (node && node.rendered && node.objectId !== undefined) out.push(node.objectId);
-  for (const child of (childrenByPath[path] || [])) out.push(...subtreeObjectIds(child));
-  return out;
-}
-function nodeIsApproximated(node) {
-  if (!node.rendered || node.objectId === undefined) return false;
-  return approximatedSolids.has(SCENE.objects[node.objectId].solid);
-}
-function visibleRows() { return Array.from(document.querySelectorAll('#hierarchyTree .tree-row')); }
-
-function setRovingTabIndex(path) {
-  for (const row of visibleRows()) row.tabIndex = -1;
-  const entry = rowElements.get(path);
-  if (entry) { entry.row.tabIndex = 0; lastFocusedPath = path; }
-}
-function focusRowElement(path) {
-  setRovingTabIndex(path);
-  const entry = rowElements.get(path);
-  if (entry) entry.row.focus();
-}
-
-function setSubtreeHidden(path, hidden) {
-  for (const id of subtreeObjectIds(path)) {
-    if (hidden) hierarchyHidden.add(id); else hierarchyHidden.delete(id);
-  }
-  applyFilters();
-}
-function toggleIsolate(path) {
-  isolatedPath = (isolatedPath === path) ? null : path;
-  applyFilters();
-}
-document.getElementById('hierarchyClearIsolation').onclick = () => { isolatedPath = null; applyFilters(); };
-
-function unionBbox(objectIds) {
-  let box = null;
-  for (const id of objectIds) {
-    const b = SCENE.objects[id].bbox;
-    if (!box) box = b.slice();
-    else {
-      box[0]=Math.min(box[0],b[0]); box[1]=Math.min(box[1],b[1]); box[2]=Math.min(box[2],b[2]);
-      box[3]=Math.max(box[3],b[3]); box[4]=Math.max(box[4],b[4]); box[5]=Math.max(box[5],b[5]);
-    }
-  }
-  return box;
-}
-function focusOnPath(path) {
-  // Containers/assemblies with no rendered descendants of their own walk
-  // up to the nearest ancestor that has any, falling back to the whole
-  // scene rather than leaving the camera on a meaningless empty bbox.
-  let probe = path;
-  let box = unionBbox(subtreeObjectIds(probe));
-  while (!box) {
-    const node = nodeByPath[probe];
-    if (!node || node.parentPath === null) break;
-    probe = node.parentPath;
-    box = unionBbox(subtreeObjectIds(probe));
-  }
-  if (!box) { viewCenter = center.slice(); dist = radius*1.35; }
-  else {
-    viewCenter = [(box[0]+box[3])/2, (box[1]+box[4])/2, (box[2]+box[5])/2];
-    const r = Math.hypot(box[3]-box[0], box[4]-box[1], box[5]-box[2]) || radius*0.05;
-    dist = Math.max(r*1.6, radius*0.02);
-  }
-  panX = 0; panY = 0;
-}
-
-function createRow(path, depth) {
-  const node = nodeByPath[path];
-  const row = document.createElement('div');
-  row.className = 'tree-row';
-  row.style.paddingLeft = (depth * 14) + 'px';
-  row.setAttribute('role', 'treeitem');
-  row.dataset.path = path;
-  row.tabIndex = -1;
-  if (hasChildren(path)) row.setAttribute('aria-expanded', expandedPaths.has(path) ? 'true' : 'false');
-
-  const toggle = document.createElement('span');
-  toggle.className = 'tree-toggle';
-  if (hasChildren(path)) {
-    toggle.textContent = expandedPaths.has(path) ? '▾' : '▸';
-    toggle.addEventListener('click', e => { e.stopPropagation(); toggleExpand(path); });
-  }
-
-  const check = document.createElement('input');
-  check.type = 'checkbox';
-  check.title = 'Show/hide this subtree';
-  check.addEventListener('click', e => e.stopPropagation());
-  check.addEventListener('change', () => setSubtreeHidden(path, !check.checked));
-
-  const label = document.createElement('span');
-  label.className = 'tree-label';
-  const differs = node.semanticVolume && node.semanticVolume !== node.name;
-  label.innerHTML = escapeHtml(node.name)
-    + (differs ? ` <span class="tree-muted">(${escapeHtml(node.semanticVolume)})</span>` : '')
-    + (!node.rendered ? ` <span class="tree-muted">${node.isAssembly ? '(assembly)' : '(container)'}</span>` : '')
-    + (nodeIsApproximated(node) ? ' <span class="tree-warn" title="Approximated geometry">⚠</span>' : '');
-
-  const actions = document.createElement('span');
-  actions.className = 'tree-actions';
-  const isolateBtn = document.createElement('button');
-  isolateBtn.type = 'button'; isolateBtn.className = 'tree-action-btn'; isolateBtn.textContent = 'Isolate';
-  isolateBtn.addEventListener('click', e => { e.stopPropagation(); toggleIsolate(path); });
-  const focusBtn = document.createElement('button');
-  focusBtn.type = 'button'; focusBtn.className = 'tree-action-btn'; focusBtn.textContent = 'Focus';
-  focusBtn.addEventListener('click', e => { e.stopPropagation(); focusOnPath(path); });
-  actions.append(isolateBtn, focusBtn);
-
-  row.append(toggle, check, label, actions);
-  row.addEventListener('click', () => {
+const tree = createHierarchyTree(document.getElementById('hierarchyTree'), {
+  nodes: HIERARCHY,
+  worldPath,
+  selected: () => selectedPath,
+  onSelect: path => {
     selectedPath = path;
-    const clickedNode = nodeByPath[path];
-    setHighlightedObject(clickedNode.rendered ? clickedNode.objectId : null);
+    const node = tree.nodeByPath[path];
+    setHighlightedObject(node.rendered ? node.objectId : null);
     updateInspector(path);
-    focusRowElement(path);
-    updateAllRowStates();
-  });
-  row.addEventListener('keydown', e => handleRowKeydown(e, path));
-  rowElements.set(path, {row, check, toggle, label});
-  return row;
-}
-
-function renderChildren(container, path, depth) {
-  for (const childPath of (childrenByPath[path] || [])) {
-    container.appendChild(createRow(childPath, depth));
-    if (expandedPaths.has(childPath)) {
-      const sub = document.createElement('div');
-      sub.className = 'tree-children';
-      container.appendChild(sub);
-      renderChildren(sub, childPath, depth + 1);
-    }
-  }
-}
-function renderTree() {
-  const root = document.getElementById('hierarchyTree');
-  root.setAttribute('role', 'tree');
-  root.innerHTML = '';
-  rowElements.clear();
-  root.appendChild(createRow(worldPath, 0));
-  if (expandedPaths.has(worldPath)) {
-    const sub = document.createElement('div');
-    sub.className = 'tree-children';
-    root.appendChild(sub);
-    renderChildren(sub, worldPath, 1);
-  }
-  setRovingTabIndex(rowElements.has(lastFocusedPath) ? lastFocusedPath : worldPath);
-  updateAllRowStates();
-}
-function toggleExpand(path) {
-  if (expandedPaths.has(path)) expandedPaths.delete(path); else expandedPaths.add(path);
-  renderTree();
-  focusRowElement(path);
-}
-function updateAllRowStates() {
-  for (const [path, {check, row}] of rowElements) {
-    const node = nodeByPath[path];
-    const ids = subtreeObjectIds(path);
+  },
+  checkbox: {onChange: (path, checked) => setSubtreeHidden(path, !checked)},
+  actions: [
+    {label: 'Isolate', onClick: path => toggleIsolate(path)},
+    {label: 'Focus', onClick: path => focusOnPath(path)},
+  ],
+  labelExtra: node => nodeIsApproximated(node) ? ' <span class="tree-warn" title="Approximated geometry">⚠</span>' : '',
+  searchExtra: node => node.rendered && node.objectId !== undefined ? SCENE.objects[node.objectId].solid : '',
+  decorateRow: (path, {row, check}, node) => {
+    const ids = tree.subtreeObjectIds(path);
     if (ids.length === 0) {
       check.checked = true; check.indeterminate = false; check.disabled = true;
     } else {
@@ -799,72 +645,55 @@ function updateAllRowStates() {
       && objectVisible[node.objectId] === 0 && !hierarchyHidden.has(node.objectId);
     row.classList.toggle('tree-filtered', !!filteredOut);
     row.classList.toggle('tree-isolated', path === isolatedPath);
-    row.classList.toggle('tree-selected', path === selectedPath);
-  }
-  document.getElementById('hierarchyClearIsolation').style.display = isolatedPath ? '' : 'none';
+  },
+  afterRefresh: () => {
+    document.getElementById('hierarchyClearIsolation').style.display = isolatedPath ? '' : 'none';
+  },
+});
+const nodeByPath = tree.nodeByPath;
+const expandedPaths = tree.expandedPaths;
+const rowElements = tree.rowElements;
+const renderTree = tree.render;
+const updateAllRowStates = tree.refreshStates;
+const subtreeObjectIds = tree.subtreeObjectIds;
+
+function pathIsDescendantOrSelf(path, ancestorPath) {
+  return path === ancestorPath || path.startsWith(ancestorPath + '/');
 }
-function handleRowKeydown(e, path) {
-  const rows = visibleRows();
-  const index = rows.findIndex(r => r.dataset.path === path);
-  if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    if (index < rows.length - 1) focusRowElement(rows[index + 1].dataset.path);
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    if (index > 0) focusRowElement(rows[index - 1].dataset.path);
-  } else if (e.key === 'ArrowRight') {
-    e.preventDefault();
-    if (hasChildren(path)) {
-      if (!expandedPaths.has(path)) toggleExpand(path);
-      else { const kids = childrenByPath[path]; if (kids && kids.length) focusRowElement(kids[0]); }
-    }
-  } else if (e.key === 'ArrowLeft') {
-    e.preventDefault();
-    if (expandedPaths.has(path) && hasChildren(path)) toggleExpand(path);
-    else { const node = nodeByPath[path]; if (node.parentPath) focusRowElement(node.parentPath); }
-  } else if (e.key === 'Enter' || e.key === ' ') {
-    e.preventDefault();
-    const entry = rowElements.get(path);
-    entry.check.checked = !entry.check.checked;
-    entry.check.dispatchEvent(new Event('change'));
+function nodeIsApproximated(node) {
+  if (!node.rendered || node.objectId === undefined) return false;
+  return approximatedSolids.has(SCENE.objects[node.objectId].solid);
+}
+function setSubtreeHidden(path, hidden) {
+  for (const id of subtreeObjectIds(path)) {
+    if (hidden) hierarchyHidden.add(id); else hierarchyHidden.delete(id);
   }
+  applyFilters();
+}
+function toggleIsolate(path) {
+  isolatedPath = (isolatedPath === path) ? null : path;
+  applyFilters();
+}
+document.getElementById('hierarchyClearIsolation').onclick = () => { isolatedPath = null; applyFilters(); };
+
+function focusOnPath(path) {
+  const box = focusBounds(tree, id => SCENE.objects[id], path);
+  if (!box) { viewCenter = center.slice(); dist = radius*1.35; }
+  else {
+    viewCenter = [(box[0]+box[3])/2, (box[1]+box[4])/2, (box[2]+box[5])/2];
+    const r = Math.hypot(box[3]-box[0], box[4]-box[1], box[5]-box[2]) || radius*0.05;
+    dist = Math.max(r*1.6, radius*0.02);
+  }
+  panX = 0; panY = 0;
 }
 
-function matchesHierarchySearch(node, q) {
-  if (node.name.toLowerCase().includes(q)
-    || node.semanticVolume.toLowerCase().includes(q)
-    || node.path.toLowerCase().includes(q)) return true;
-  if (node.rendered && node.objectId !== undefined) {
-    return SCENE.objects[node.objectId].solid.toLowerCase().includes(q);
-  }
-  return false;
-}
-function applyHierarchySearch() {
-  const q = document.getElementById('hierarchySearch').value.toLowerCase().trim();
-  if (!q) { renderTree(); return; }
-  const matches = HIERARCHY.filter(n => matchesHierarchySearch(n, q));
-  for (const match of matches) {
-    let p = match.parentPath;
-    while (p) { expandedPaths.add(p); const parent = nodeByPath[p]; p = parent ? parent.parentPath : null; }
-  }
-  renderTree();
-  const matchPaths = new Set(matches.map(n => n.path));
-  for (const [path, {row}] of rowElements) {
-    row.classList.toggle('tree-match', matchPaths.has(path));
-    row.classList.toggle('tree-dim', !matchPaths.has(path));
-  }
-}
+function applyHierarchySearch() { tree.search(document.getElementById('hierarchySearch').value); }
 document.getElementById('hierarchySearch').addEventListener('input', applyHierarchySearch);
 
 function revealInHierarchy(path) {
-  const node = nodeByPath[path];
-  if (!node) return;
-  let p = node.parentPath;
-  while (p) { expandedPaths.add(p); const parent = nodeByPath[p]; p = parent ? parent.parentPath : null; }
+  if (!nodeByPath[path]) return;
   selectedPath = path;
-  renderTree();
-  const entry = rowElements.get(path);
-  if (entry) entry.row.scrollIntoView({block: 'nearest'});
+  tree.reveal(path);
 }
 
 // --- Selection: viewport highlight + the "Picked Object" inspector -------
