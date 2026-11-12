@@ -107,33 +107,7 @@ input[type=checkbox] { width: auto; }
   <div class="small-actions"><button id="allMaterials">All</button><button id="noMaterials">None</button></div>
   <div id="materials"></div>
   <h2>Picked Object</h2>
-  <div id="details">
-    <div id="detailsEmpty">Click a point in the detector view.</div>
-    <div id="detailsContent" style="display:none">
-      <div class="inspector-field"><span>Path</span><b id="detailPath"></b></div>
-      <div class="inspector-field"><span>Semantic path</span><b id="detailSemanticPath"></b></div>
-      <div class="inspector-field"><span>Volume</span><b id="detailVolume"></b></div>
-      <div class="inspector-field"><span>Material</span><b id="detailMaterial"></b></div>
-      <div class="inspector-field"><span>Solid type</span><b id="detailSolidType"></b></div>
-      <div id="detailApproximated" class="warn" style="display:none">This solid's geometry is approximated -- see Accuracy Notes below.</div>
-      <div class="inspector-section">Declared parameters (mm / rad)</div>
-      <div id="detailParams" class="mono"></div>
-      <div class="inspector-section">Tessellated bounds (mm)</div>
-      <div id="detailBounds" class="mono"></div>
-      <div class="inspector-section">Local transform (mm)</div>
-      <div id="detailLocalMatrix" class="mono"></div>
-      <div class="inspector-section">Global transform (mm)</div>
-      <div id="detailGlobalMatrix" class="mono"></div>
-      <div class="small-actions">
-        <button id="detailCopyPath" type="button">Copy path</button>
-        <button id="detailCopyName" type="button">Copy name</button>
-      </div>
-      <div class="small-actions">
-        <button id="detailFocus" type="button">Focus</button>
-        <button id="detailIsolate" type="button">Isolate</button>
-      </div>
-    </div>
-  </div>
+  <div id="details"></div>
   <h2>Accuracy Notes</h2>
   <div class="row">
     <select id="diagnosticSeverity"></select>
@@ -152,6 +126,8 @@ input[type=checkbox] { width: auto; }
 </div>
 <script>
 __CLIPPING_JS__
+__PICKING_JS__
+__INSPECTOR_JS__
 __COMMON_JS__
 __VIEWSTATE_JS__
 const SCENE = __SCENE__;
@@ -356,35 +332,11 @@ const uOpacity = gl.getUniformLocation(prog, 'u_opacity');
 const clipLoc = clipLocations(gl, prog);
 let wireBuffers = null;
 
-// --- Depth-correct picking: an offscreen ID buffer -----------------------
-// Replaces vertex-sampling (which could miss a large face or select an
-// occluded object) with an exact, depth-tested render-to-texture pass:
-// every triangle's object id is encoded as a colour, drawn once per click
-// into its own framebuffer, then read back at the clicked pixel.
-const idVs = shader(gl.VERTEX_SHADER, `
-attribute vec3 a_pos; attribute vec4 a_id_color; attribute float a_vis;
-uniform mat4 u_mvp;
-varying vec4 v_id_color; varying float v_vis; varying vec3 v_pos;
-void main() {
-  gl_Position = u_mvp * vec4(a_pos, 1.0);
-  v_id_color = a_id_color;
-  v_vis = a_vis;
-  v_pos = a_pos;
-}`);
-const idFs = shader(gl.FRAGMENT_SHADER, CLIP_FRAGMENT_PRECISION + `
-varying vec4 v_id_color; varying float v_vis; varying vec3 v_pos;
-` + CLIP_GLSL + `
-void main() {
-  if (v_vis < 0.5) discard;
-  if (clipDiscard(v_pos)) discard;
-  gl_FragColor = v_id_color;
-}`);
-const idProg = gl.createProgram(); gl.attachShader(idProg, idVs); gl.attachShader(idProg, idFs); gl.linkProgram(idProg);
-const idLocPos = gl.getAttribLocation(idProg, 'a_pos');
-const idLocVis = gl.getAttribLocation(idProg, 'a_vis');
-const idLocIdColor = gl.getAttribLocation(idProg, 'a_id_color');
-const idUMvp = gl.getUniformLocation(idProg, 'u_mvp');
-const idClipLoc = clipLocations(gl, idProg);
+// --- Depth-correct picking (see assets/picking.js) -----------------------
+// The shared picker renders every visible object's id colour into an
+// offscreen buffer under the active clipping and reads back the clicked pixel.
+const picker = createPicker(gl, {visibility: true});
+const idProg = picker.program;
 
 // id+1, so a cleared (0,0,0,0) pixel decodes to "no object" (-1).
 const idColors = new Uint8Array(ids.length * 4);
@@ -397,59 +349,19 @@ for (let i = 0; i < ids.length; i++) {
 }
 const idColorBuf = makeBuffer(idColors, gl.STATIC_DRAW);
 
-let pickFbo = null, pickTexture = null, pickDepthBuffer = null, pickWidth = 0, pickHeight = 0;
-function ensurePickFramebuffer(width, height) {
-  if (pickFbo && pickWidth === width && pickHeight === height) return;
-  if (!pickFbo) {
-    pickFbo = gl.createFramebuffer();
-    pickTexture = gl.createTexture();
-    pickDepthBuffer = gl.createRenderbuffer();
-  }
-  pickWidth = width; pickHeight = height;
-  gl.bindTexture(gl.TEXTURE_2D, pickTexture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.bindRenderbuffer(gl.RENDERBUFFER, pickDepthBuffer);
-  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFbo);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, pickTexture, 0);
-  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, pickDepthBuffer);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-}
 function pickAt(devX, devY) {
-  if (devX < 0 || devY < 0 || devX >= canvas.width || devY >= canvas.height) return -1;
-  ensurePickFramebuffer(canvas.width, canvas.height);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFbo);
-  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return -1;
-  }
-  gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.disable(gl.BLEND);
-  gl.enable(gl.DEPTH_TEST);
-  gl.clearColor(0, 0, 0, 0);
-  gl.clearDepth(1.0);
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  gl.useProgram(idProg);
   const cx = viewCenter[0] + panX, cy = viewCenter[1] + panY, cz = viewCenter[2];
   const eye = [cx + dist*Math.cos(pitch)*Math.sin(yaw), cy + dist*Math.sin(pitch), cz + dist*Math.cos(pitch)*Math.cos(yaw)];
   const mvp = mat4mul(perspective(45*Math.PI/180, canvas.width/canvas.height, radius/500, radius*20), lookAt(eye, [cx,cy,cz], cameraUp));
-  gl.uniformMatrix4fv(idUMvp, false, mvp);
-  uploadClip(gl, idClipLoc, clipData);
-  setAttrib(idLocPos, surfacePosBuf, 3);
-  setAttrib(idLocVis, visibleBuf, 1);
-  setAttrib(idLocIdColor, idColorBuf, 4, gl.UNSIGNED_BYTE, true);
-  gl.drawArrays(gl.TRIANGLES, 0, positions.length/3);
-  const pixel = new Uint8Array(4);
-  gl.readPixels(devX, devY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.useProgram(prog);
-  const encoded = pixel[0] + pixel[1]*256 + pixel[2]*65536;
-  return encoded === 0 ? -1 : encoded - 1;
+  return picker.pick(devX, devY, {
+    width: canvas.width, height: canvas.height, mvp, clip: clipData,
+    draw: locs => {
+      setAttrib(locs.pos, surfacePosBuf, 3);
+      setAttrib(locs.vis, visibleBuf, 1);
+      setAttrib(locs.idColor, idColorBuf, 4, gl.UNSIGNED_BYTE, true);
+      gl.drawArrays(gl.TRIANGLES, 0, positions.length/3);
+    },
+  });
 }
 
 const bbox = SCENE.meta.bbox;
@@ -966,72 +878,18 @@ function setHighlightedObject(id) {
   updateWireHighlight();
 }
 
-function semanticPathFor(path) {
-  const segments = [];
-  let p = path;
-  while (p) {
-    const node = nodeByPath[p];
-    if (!node) break;
-    segments.unshift(node.semanticName);
-    p = node.parentPath;
-  }
-  return segments.join('/');
-}
-function formatMatrixRows(flat) {
-  const rows = [];
-  for (let r = 0; r < 3; r++) {
-    rows.push(flat.slice(r * 4, r * 4 + 4).map(v => v.toFixed(3)).join('  '));
-  }
-  return rows.join('\n');
-}
-function formatParams(params) {
-  const keys = Object.keys(params);
-  if (!keys.length) return '(none -- Boolean solid; see Accuracy Notes)';
-  return keys.map(k => `${k}: ${params[k].toFixed(3)}`).join('\n');
-}
-function formatBounds(bbox) {
-  return `min: ${bbox.slice(0, 3).map(v => v.toFixed(3)).join(', ')}\n`
-    + `max: ${bbox.slice(3, 6).map(v => v.toFixed(3)).join(', ')}`;
-}
+const inspector = buildInspector(document.getElementById('details'), {
+  actions: [[
+    {id: 'detailFocus', label: 'Focus', onClick: info => focusOnPath(info.path)},
+    {id: 'detailIsolate', label: 'Isolate', onClick: info => toggleIsolate(info.path)},
+  ]],
+});
 
 function updateInspector(path) {
-  const emptyEl = document.getElementById('detailsEmpty');
-  const contentEl = document.getElementById('detailsContent');
   const node = path ? nodeByPath[path] : null;
-  if (!node) {
-    emptyEl.style.display = '';
-    contentEl.style.display = 'none';
-    return;
-  }
-  emptyEl.style.display = 'none';
-  contentEl.style.display = '';
-  document.getElementById('detailPath').textContent = path;
-  document.getElementById('detailSemanticPath').textContent = semanticPathFor(path);
-  document.getElementById('detailVolume').textContent = node.semanticVolume
-    + (node.semanticVolume !== node.volume ? ` (${node.volume})` : '');
-
-  const approximatedEl = document.getElementById('detailApproximated');
-  const materialEl = document.getElementById('detailMaterial');
-  const solidTypeEl = document.getElementById('detailSolidType');
-  if (node.rendered && node.objectId !== undefined) {
-    const obj = SCENE.objects[node.objectId];
-    const solidInfo = SOLIDS[obj.solid] || { type: obj.solidType, params: {} };
-    materialEl.textContent = obj.material;
-    solidTypeEl.textContent = obj.solidType;
-    document.getElementById('detailParams').textContent = formatParams(solidInfo.params);
-    document.getElementById('detailBounds').textContent = formatBounds(obj.bbox);
-    approximatedEl.style.display = approximatedSolids.has(obj.solid) ? '' : 'none';
-  } else {
-    materialEl.textContent = `(none -- ${node.isAssembly ? 'assembly' : 'container'}, not rendered)`;
-    solidTypeEl.textContent = '--';
-    document.getElementById('detailParams').textContent = '--';
-    document.getElementById('detailBounds').textContent = '--';
-    approximatedEl.style.display = 'none';
-  }
-  document.getElementById('detailLocalMatrix').textContent = node.localMatrix
-    ? formatMatrixRows(node.localMatrix) : '(world root)';
-  document.getElementById('detailGlobalMatrix').textContent = node.globalMatrix
-    ? formatMatrixRows(node.globalMatrix) : '--';
+  if (!node) { inspector.clear(); return; }
+  const object = node.rendered && node.objectId !== undefined ? SCENE.objects[node.objectId] : null;
+  inspector.show(inspectorInfo(nodeByPath, node, object, SOLIDS, approximatedSolids));
 }
 
 function selectObject(id) {
@@ -1048,16 +906,6 @@ function clearSelection() {
   updateInspector(null);
   updateAllRowStates();
 }
-
-document.getElementById('detailCopyPath').onclick = () => {
-  if (selectedPath) navigator.clipboard.writeText(selectedPath).catch(() => {});
-};
-document.getElementById('detailCopyName').onclick = () => {
-  const node = selectedPath ? nodeByPath[selectedPath] : null;
-  if (node) navigator.clipboard.writeText(node.name).catch(() => {});
-};
-document.getElementById('detailFocus').onclick = () => { if (selectedPath) focusOnPath(selectedPath); };
-document.getElementById('detailIsolate').onclick = () => { if (selectedPath) toggleIsolate(selectedPath); };
 
 renderTree();
 

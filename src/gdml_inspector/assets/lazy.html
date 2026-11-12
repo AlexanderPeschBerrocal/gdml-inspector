@@ -49,6 +49,13 @@ input[type=range] { width: 100%; }
 .diagnostic-row { margin: 4px 0; padding-bottom: 4px; border-bottom: 1px solid #2c4059; }
 .diagnostic-row:last-child { border-bottom: none; }
 .diagnostic-count { color: #8fa6c0; }
+.inspector-field { display: grid; grid-template-columns: 110px 1fr; gap: 6px; margin: 2px 0; word-break: break-word; font-size: 12px; }
+.inspector-field span { color: #8fa6c0; }
+.inspector-section { margin: 10px 0 4px; font-size: 11px; color: #8fa6c0; text-transform: uppercase; letter-spacing: .03em; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: pre-wrap; }
+.warn { background: #3a2a10; border: 1px solid #8a5a16; padding: 8px; border-radius: 6px; font-size: 12px; margin: 6px 0; }
+.small-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
+#detailsEmpty { color: #9cafc6; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -95,6 +102,9 @@ input[type=range] { width: 100%; }
   <div id="clipPanel"></div>
   <div class="row"><label>Opacity</label><input id="opacity" type="range" min="10" max="100" value="100"></div>
 
+  <h2>Picked Object</h2>
+  <div id="details"></div>
+
   <h2>Materials</h2>
   <div id="materials"></div>
   <h2>Warnings</h2>
@@ -116,6 +126,8 @@ input[type=range] { width: 100%; }
 </main>
 <script>
 __CLIPPING_JS__
+__PICKING_JS__
+__INSPECTOR_JS__
 __COMMON_JS__
 __VIEWSTATE_JS__
 const MANIFEST = __MANIFEST__;
@@ -178,6 +190,7 @@ function formatBytes(n) {
 }
 
 const states = Object.fromEntries(MANIFEST.chunks.map(c => [c.key, { loaded:false, loading:false, visible:false, error:'', buffers:null, bytes:0 }]));
+let selectedObjectId = null, selectedPath = null;
 const selectedLayers = new Set();
 const layerChecks = new Map();
 const grouped = {};
@@ -265,13 +278,17 @@ async function loadChunk(chunk) {
     if (endOff!==data.byteLength) throw new Error(`Truncated chunk ${chunk.url}`);
     const positions=new Float32Array(data,posOff,vertices*3);
     const colors=new Uint8Array(data,colorOff,vertices*4);
+    // v2 chunks carry objectId+1 per vertex; a v1 chunk has none (idOff===endOff) and is not pickable.
+    const hasIds=version>=2 && idOff<endOff;
     state.buffers={
       pos:makeBuffer(positions),
       color:makeBuffer(colors),
+      id:hasIds ? makeBuffer(new Uint8Array(data,idOff,vertices*4)) : null,
       count:vertices,
     };
     state.loaded=true; state.visible=selectedLayers.has(chunk.baseKey); state.bytes=data.byteLength;
     updateStatus(`Loaded ${chunk.subsystem} / ${chunk.layer}.`, 'loaded');
+    refreshInspector();
   } catch (error) {
     state.error=String(error);
     const hint=error && error.digest ? '' : '\nUse --serve or another HTTP server; file:// cannot fetch lazy chunks.';
@@ -285,7 +302,9 @@ function unloadChunk(chunk) {
   const state=states[chunk.key];
   if (!state.loaded || !state.buffers) return;
   gl.deleteBuffer(state.buffers.pos); gl.deleteBuffer(state.buffers.color);
+  if (state.buffers.id) gl.deleteBuffer(state.buffers.id);
   state.loaded=false; state.buffers=null; state.bytes=0;
+  refreshInspector();
 }
 function updateStatus(text, cls='') { const el=document.getElementById('status'); el.textContent=text; el.className=`muted ${cls}`; }
 function updateStats() {
@@ -307,23 +326,29 @@ function shader(type, source) {
   return value;
 }
 const vertexShader=shader(gl.VERTEX_SHADER, `
-attribute vec3 a_pos; attribute vec4 a_color;
-uniform mat4 u_mvp; varying vec4 v_color; varying vec3 v_world;
-void main() { v_world=a_pos; v_color=a_color; gl_Position=u_mvp*vec4(a_pos,1.0); }
+attribute vec3 a_pos; attribute vec4 a_color; attribute vec4 a_id;
+uniform mat4 u_mvp; uniform float u_selected; varying vec4 v_color; varying vec3 v_world; varying float v_highlight;
+void main() {
+  v_world=a_pos; v_color=a_color; gl_Position=u_mvp*vec4(a_pos,1.0);
+  // a_id holds objectId+1 as little-endian bytes (0 = no object); u_selected uses the same encoding.
+  float encoded=floor(a_id.r*255.0+0.5)+256.0*floor(a_id.g*255.0+0.5)+65536.0*floor(a_id.b*255.0+0.5);
+  v_highlight=(u_selected>0.5 && abs(encoded-u_selected)<0.5) ? 1.0 : 0.0;
+}
 `);
 const fragmentShader=shader(gl.FRAGMENT_SHADER, CLIP_FRAGMENT_PRECISION + `
-varying vec4 v_color; varying vec3 v_world;
+varying vec4 v_color; varying vec3 v_world; varying float v_highlight;
 uniform float u_opacity;
 ` + CLIP_GLSL + `
 void main() {
   if (clipDiscard(v_world)) discard;
-  gl_FragColor=vec4(v_color.rgb,v_color.a*u_opacity);
+  gl_FragColor=vec4(mix(v_color.rgb,vec3(1.0,0.82,0.2),0.5*v_highlight),v_color.a*u_opacity);
 }
 `);
 const program=gl.createProgram(); gl.attachShader(program,vertexShader); gl.attachShader(program,fragmentShader); gl.linkProgram(program);
 if (!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
 const locations={
-  pos:gl.getAttribLocation(program,'a_pos'), color:gl.getAttribLocation(program,'a_color'),
+  pos:gl.getAttribLocation(program,'a_pos'), color:gl.getAttribLocation(program,'a_color'), id:gl.getAttribLocation(program,'a_id'),
+  selected:gl.getUniformLocation(program,'u_selected'),
   mvp:gl.getUniformLocation(program,'u_mvp'), opacity:gl.getUniformLocation(program,'u_opacity'),
 };
 const clipLoc=clipLocations(gl,program);
@@ -374,19 +399,24 @@ function updateAxisLabels(mvp,enabled) {
     label.style.top=((-ty/tw*.5+.5)*canvas.clientHeight)+'px';
   }
 }
+function cameraMvp() {
+  const cx=center[0]+panX,cy=center[1]+panY,cz=center[2];
+  const eye=[cx+dist*Math.cos(pitch)*Math.sin(yaw),cy+dist*Math.sin(pitch),cz+dist*Math.cos(pitch)*Math.cos(yaw)];
+  return mat4mul(perspective(45*Math.PI/180,canvas.width/canvas.height,radius/1000,radius*30),lookAt(eye,[cx,cy,cz],cameraUp));
+}
 function render() {
   renderPending=false; resize(); gl.clearColor(0.027,0.067,0.122,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
   const opacity=+document.getElementById('opacity').value/100; gl.depthMask(opacity>=0.999);
-  const cx=center[0]+panX,cy=center[1]+panY,cz=center[2];
-  const eye=[cx+dist*Math.cos(pitch)*Math.sin(yaw),cy+dist*Math.sin(pitch),cz+dist*Math.cos(pitch)*Math.cos(yaw)];
-  const mvp=mat4mul(perspective(45*Math.PI/180,canvas.width/canvas.height,radius/1000,radius*30),lookAt(eye,[cx,cy,cz],cameraUp));
+  const mvp=cameraMvp();
   gl.useProgram(program); gl.uniformMatrix4fv(locations.mvp,false,mvp); gl.uniform1f(locations.opacity,opacity);
+  gl.uniform1f(locations.selected,selectedObjectId===null ? 0 : selectedObjectId+1);
   uploadClip(gl,clipLoc,clipData);
   for (const chunk of MANIFEST.chunks) {
     const state=states[chunk.key]; if(!state.loaded||!state.visible||!state.buffers)continue;
     gl.bindBuffer(gl.ARRAY_BUFFER,state.buffers.pos); gl.enableVertexAttribArray(locations.pos); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
     gl.bindBuffer(gl.ARRAY_BUFFER,state.buffers.color); gl.enableVertexAttribArray(locations.color); gl.vertexAttribPointer(locations.color,4,gl.UNSIGNED_BYTE,true,0,0);
+    bindIdAttribute(gl,locations.id,state.buffers.id);
     gl.drawArrays(gl.TRIANGLES,0,state.buffers.count);
   }
   const axesEnabled=document.getElementById('coordinateAxes').checked;
@@ -394,8 +424,10 @@ function render() {
     gl.disable(gl.DEPTH_TEST);
     gl.uniform1f(locations.opacity,1);
     uploadClip(gl,clipLoc,null);
-    gl.bindBuffer(gl.ARRAY_BUFFER,axisPosBuffer); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
-    gl.bindBuffer(gl.ARRAY_BUFFER,axisColorBuffer); gl.vertexAttribPointer(locations.color,4,gl.UNSIGNED_BYTE,true,0,0);
+    gl.uniform1f(locations.selected,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,axisPosBuffer); gl.enableVertexAttribArray(locations.pos); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,axisColorBuffer); gl.enableVertexAttribArray(locations.color); gl.vertexAttribPointer(locations.color,4,gl.UNSIGNED_BYTE,true,0,0);
+    bindIdAttribute(gl,locations.id,null);
     gl.drawArrays(gl.LINES,0,6);
   }
   updateAxisLabels(mvp,axesEnabled);
@@ -427,6 +459,115 @@ function renderMaterials() {
   root.innerHTML=Object.entries(MANIFEST.materials).map(([name,count])=>{const c=MANIFEST.materialColors[name]||[128,128,128,255];return `<div class="material"><span class="swatch" style="background:rgba(${c[0]},${c[1]},${c[2]},${Math.max(c[3]/255,.35)})"></span><span title="${escapeHtml(name)}">${escapeHtml(name)}</span><span>${count.toLocaleString()}</span></div>`;}).join('');
 }
 
+// --- Picking, selection and the placement inspector ---
+// Chunks (format v2) carry a per-vertex object id, so a click resolves to an
+// object even when its neighbours are unloaded. Everything else about a
+// placement (path, material, solid, transforms) comes from placements.json,
+// fetched and digest-checked on first use rather than at page load.
+const picker = createPicker(gl);
+const approximatedSolids = new Set(MANIFEST.diagnostics.filter(d => d.category === 'unsupported').map(d => d.identifier));
+const pickingSupported = Boolean(MANIFEST.placements) && (MANIFEST.chunkFormat || 1) >= 2;
+const inspector = buildInspector(document.getElementById('details'), {
+  emptyText: pickingSupported
+    ? 'Click a point in the detector view.'
+    : 'Picking is unavailable: this export predates per-object ids. Re-export with this version of gdml-inspector.',
+});
+let placements = null, placementsPromise = null;
+
+function ensurePlacements() {
+  if (!pickingSupported) return Promise.resolve(null);
+  if (!placementsPromise) {
+    const entry = MANIFEST.placements;
+    placementsPromise = (async () => {
+      const response = await fetch(entry.url);
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const data = await response.arrayBuffer();
+      if (entry.sha256) {
+        const actual = await sha256Hex(data);
+        if (actual !== null && actual !== entry.sha256) {
+          throw new Error(`${entry.url} fails its recorded sha256 (expected ${entry.sha256.slice(0, 12)}…, got ${actual.slice(0, 12)}…): it is corrupt or was edited after export.`);
+        }
+      }
+      const doc = JSON.parse(new TextDecoder().decode(data));
+      placements = {
+        objects: doc.objects, solids: doc.solids,
+        nodeByPath: Object.fromEntries(doc.nodes.map(n => [n.path, n])),
+      };
+      return placements;
+    })().catch(error => {
+      placementsPromise = null;
+      updateStatus(`Could not load the placement metadata ${entry.url}.\n${error}`, 'error');
+      return null;
+    });
+  }
+  return placementsPromise;
+}
+
+function objectGeometryShown(object) {
+  return MANIFEST.chunks.some(c => c.baseKey === object.chunk && states[c.key].loaded && states[c.key].visible);
+}
+function refreshInspector() {
+  if (!placements || selectedPath === null) { inspector.clear(); return; }
+  const node = placements.nodeByPath[selectedPath];
+  if (!node) { inspector.clear(); return; }
+  const object = node.objectId !== undefined ? placements.objects[node.objectId] : null;
+  const note = object && !objectGeometryShown(object)
+    ? `Geometry not shown: its layer (${object.chunk.replace('\x1f', ' / ')}) is not loaded or is hidden. The details below come from the placement metadata.`
+    : undefined;
+  inspector.show(inspectorInfo(placements.nodeByPath, node, object, placements.solids, approximatedSolids, note));
+}
+function clearSelection() {
+  selectedObjectId = null; selectedPath = null;
+  inspector.clear(); requestRender();
+}
+async function selectObjectId(id) {
+  selectedObjectId = id; selectedPath = null; requestRender();
+  const loaded = await ensurePlacements();
+  if (selectedObjectId !== id) return; // a newer click superseded this one
+  if (loaded) { selectedPath = loaded.objects[id].path; refreshInspector(); }
+}
+// Selects by placement path (saved views). Returns false for an unknown path.
+async function selectPath(path) {
+  const loaded = await ensurePlacements();
+  const node = loaded ? loaded.nodeByPath[path] : null;
+  if (!node) return false;
+  selectedPath = path;
+  selectedObjectId = node.objectId !== undefined ? node.objectId : null;
+  refreshInspector(); requestRender();
+  return true;
+}
+
+function pickAt(devX, devY) {
+  resize();
+  return picker.pick(devX, devY, {
+    width: canvas.width, height: canvas.height, mvp: cameraMvp(), clip: clipData,
+    draw: locs => {
+      for (const chunk of MANIFEST.chunks) {
+        const state = states[chunk.key];
+        if (!state.loaded || !state.visible || !state.buffers) continue;
+        gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.pos);
+        gl.enableVertexAttribArray(locs.pos);
+        gl.vertexAttribPointer(locs.pos, 3, gl.FLOAT, false, 0, 0);
+        bindIdAttribute(gl, locs.idColor, state.buffers.id);
+        gl.drawArrays(gl.TRIANGLES, 0, state.buffers.count);
+      }
+    },
+  });
+}
+let pressedAt = null;
+canvas.addEventListener('mousedown', e => { pressedAt = [e.clientX, e.clientY]; });
+canvas.addEventListener('click', e => {
+  // A drag (rotate/pan) ends in a click too; only a stationary click picks.
+  if (pressedAt && Math.hypot(e.clientX - pressedAt[0], e.clientY - pressedAt[1]) > 4) return;
+  if (!pickingSupported) { updateStatus('Picking is unavailable: this export predates per-object ids. Re-export with this version of gdml-inspector.', 'error'); return; }
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const devX = Math.floor((e.clientX - rect.left) * dpr);
+  const devY = canvas.height - 1 - Math.floor((e.clientY - rect.top) * dpr);
+  const id = pickAt(devX, devY);
+  if (id < 0) clearSelection(); else selectObjectId(id);
+});
+
 // Shared clipping state (see assets/clipping.js).
 let clipData=null;
 buildClipPanel(document.getElementById('clipPanel'),{bbox:MANIFEST.bbox,onChange:data=>{clipData=data;requestRender();}});
@@ -443,6 +584,8 @@ function captureViewSections() {
       releaseHidden: document.getElementById('releaseHidden').checked,
     },
     clipping: getClipState(),
+    // The lazy viewer has no tree yet; only the selection is meaningful.
+    hierarchy: {hiddenPaths: [], expandedPaths: [], isolatedPath: null, selectedPath, search: ''},
     layers: {
       selected: [...selectedLayers].sort().map(key => {
         const [subsystem, layer] = key.split('\x1f');
@@ -455,7 +598,7 @@ async function applyViewSections(state, report) {
   const input = document.getElementById.bind(document);
   const fire = (id, type) => input(id).dispatchEvent(new Event(type, {bubbles: true}));
   if (state.filters) report.ignored.push('filters');
-  if (state.hierarchy) report.ignored.push('hierarchy');
+  if (state.hierarchy) report.ignored.push('hierarchy');  // the tree; the selection is applied below
   if (state.display) {
     const d = state.display;
     if (d.opacity !== undefined) { input('opacity').value = d.opacity; fire('opacity', 'input'); }
@@ -482,6 +625,13 @@ async function applyViewSections(state, report) {
       await setLayer(key, true);
     }
     report.applied.push('layers');
+  }
+  if (state.hierarchy) {
+    const path = state.hierarchy.selectedPath;
+    if (path === null) clearSelection();
+    else if (!pickingSupported) report.ignored.push('selection');
+    else if (await selectPath(path)) report.applied.push('selection');
+    else { clearSelection(); report.unknown.push({kind: 'selected placement', value: path}); }
   }
   requestRender();
 }

@@ -176,8 +176,8 @@ suite is not a claim that those gaps have been fixed.
   mesh; nothing fills the cut, so a cut view shows surfaces only and is not a
   quantitative solid section. The panel says so.
 - Clipping applies to filled surfaces, the wireframe overlay, selection
-  highlighting and picking alike (standalone; lazy has none of the last
-  three). The coordinate axes are never clipped.
+  highlighting and picking alike (the lazy viewer has no wireframe overlay).
+  The coordinate axes are never clipped.
 - No visible plane gizmo (the issue marked it optional) and no saved-view UI
   yet: the state is serialisable (`getClipState()`/`setClipState()`) for issue
   #10 to use.
@@ -221,20 +221,32 @@ selected subsystem/layers and "unload hidden".
   what both share (camera, projection, opacity, axes, clipping) and says what
   it ignored, and vice versa.
 - **Not saved:** material colours (fixed by the backend, not user-editable),
-  selection in lazy mode (it has no picking), the diagnostics filters, and the
-  scroll position of the hierarchy tree. Lazy layer names come from this
+  the diagnostics filters, and the scroll position of the hierarchy tree. Lazy layer names come from this
   tool's heuristic classification, so a changed classification can make a layer
   unknown; it is reported as such.
 
-## Object picking and the placement inspector (standalone viewer)
+## Object picking and the placement inspector
 
-- Available in the standalone viewer only so far. Lazy chunks now carry
-  per-vertex object ids (chunk format v2) and a `placements.json` asset, but
-  the lazy viewer does not consume them yet; lazy picking is tracked
-  separately under issue #4.
-- "Both modes identify the same placement for an equivalent visible view"
-  and "selection survives a chunk reload" (issue #4's lazy-specific
-  acceptance criteria) are not addressed by this slice.
+- Both viewers share one picker (`picking.js`) and one inspector panel
+  (`inspector.js`). The standalone viewer reads placement data from the
+  embedded scene; the lazy viewer reads it from `placements.json`, fetched and
+  sha256-checked on first click (or when a saved view selects a placement), so
+  it costs nothing until used. If that file cannot be fetched or fails its
+  digest, the status line says so, nothing is selected in the panel, and
+  rendering is unaffected; a later click retries.
+- Lazy picking sees only loaded, visible chunks, under the active clipping:
+  an unloaded layer neither can be picked nor hides what is behind it.
+  Selection is by object id, so it survives unloading and reloading the
+  object's layer; while the layer is unloaded the inspector still shows the
+  placement's details from `placements.json` and marks the geometry as not
+  shown.
+- A lazy export made before chunk format v2 (v1 chunks, no `placements.json`)
+  still renders; picking is reported as unavailable and asks for a re-export.
+- Lazy clicks that move more than a few pixels count as a drag, not a pick.
+- The lazy viewer has no hierarchy tree yet, so there is no "show in
+  hierarchy", focus or isolate on a lazy selection.
+- Placement ids are encoded in 24 bits in the picking pass (about 16.7 million
+  objects), far above the vertex budgets this tool accepts.
 - Highlighting is a colour tint on the selected object's own surface, not
   a drawn outline -- WebGL1 has no single inexpensive pass for true
   silhouette outlining without a stencil buffer or extra geometry, and a

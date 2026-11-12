@@ -60,7 +60,7 @@ destination. `python -m gdml_inspector` supports the same options as the main CL
 | Opacity | Yes | Yes |
 | Clipping: shader-based phi wedge (keep/remove) plus x/y/z planes, slabs and an arbitrary plane; open (uncapped) cuts | Yes | Yes |
 | Material toggles, name/metadata search, solid-type filtering | Yes | Material legend only |
-| Approximate click inspection of object metadata | Yes | Not yet |
+| Depth-correct click picking, highlight and placement inspector | Yes | Yes (needs a v2 export) |
 | Wireframe overlay and light/dark theme | Yes | Not yet |
 | Subsystem/layer toggles and unloading hidden geometry | Not applicable | Yes |
 | Structured diagnostics (code, severity, category, construct, backend) | Yes | Yes |

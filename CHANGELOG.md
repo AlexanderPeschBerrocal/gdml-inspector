@@ -54,12 +54,19 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Lazy viewer: depth-correct click picking, selection highlight and the
+  placement inspector, sharing `picking.js` and `inspector.js` with the
+  standalone viewer. Placement details come from `placements.json` (fetched
+  and digest-checked on first use), so they are available for objects whose
+  layer is unloaded; selection survives unloading and reloading a layer, and
+  saved lazy views record `selectedPath`. Exports made before chunk format v2
+  still render, with picking reported as unavailable.
 - Lazy chunk format v2: each chunk stores a per-vertex object id, and a new
   `<stem>.assets/placements.json` asset (hierarchy nodes, object table,
   solids) is recorded in the manifest with its digest, verified by
-  `--reuse-assets` and included in `--bundle`. Foundation for lazy picking,
-  hierarchy and filters; the viewer reads both v1 and v2 chunks but does not
-  use the ids yet. `--reuse-assets` on older output requires a rebuild.
+  `--reuse-assets` and included in `--bundle`. Foundation for lazy picking
+  (below), hierarchy and filters; the viewer reads both v1 and v2 chunks.
+  `--reuse-assets` on older output requires a rebuild.
 - Saved view state in both viewers. "Save view" writes a versioned
   `.view.json` (camera, projection, opacity, axes, clipping and, per viewer:
   filters, hidden/isolated/selected placements and tree state, or the selected

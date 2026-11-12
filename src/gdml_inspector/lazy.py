@@ -430,6 +430,8 @@ def write_html(manifest: dict, output: Path) -> None:
             "lazy.html",
             {
                 "CLIPPING_JS": read_asset("clipping.js"),
+                "PICKING_JS": read_asset("picking.js"),
+                "INSPECTOR_JS": read_asset("inspector.js"),
                 "COMMON_JS": read_asset("common.js"),
                 "VIEWSTATE_JS": read_asset("viewstate.js"),
                 "TITLE": html.escape(str(manifest["sourceFile"])),
