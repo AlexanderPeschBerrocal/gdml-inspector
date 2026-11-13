@@ -496,13 +496,37 @@ them.
 `uint32` per vertex (`objectId + 1`, 0 = none), costing +4 bytes/vertex (20% of
 chunk bytes). The viewer reads v1 and v2 chunks. `placements.json` (digest and
 size in the manifest, covered by `--reuse-assets` and `--bundle`) holds the
-hierarchy nodes, the object table and the solids table so metadata exists for
-objects whose chunk is not loaded. It is one file and is not compact: measured
-on a real detector (7,405 objects, 7,481 nodes) it is 7.9 MiB, about 1.1
-KB/object, because nodes and objects repeat paths, names and matrices. That is
-acceptable at this scale but not for 100k+ objects; per-chunk metadata
-splitting belongs to issue #7. `--reuse-assets` refuses output from before v2
-and asks for a rebuild.
+placement metadata so it exists for objects whose chunk is not loaded.
+
+**Placements index and detail shards (`placements` format 2).** The metadata is
+split by who needs it:
+
+- The *index* (`placements.json`, columnar, with a shared string table) holds the
+  placement tree and, per object, the identifying fields the hierarchy tree,
+  filters and the inspector's text need: names, logical volume, material,
+  solid, solid type and owning chunk. Paths are stored as the segment below the
+  parent. It is what the tree, filters and picking load.
+- *Detail shards* (`placements.shard-NNNN.json`, one per chunk, plus
+  `placements.containers.json` for non-rendered containers) hold bounding boxes
+  and local/global transforms. The viewer fetches one only when the inspector
+  shows a placement of that chunk (it says "loading…" meanwhile) or a Focus
+  needs its boxes; the tree and filters never fetch a shard.
+- Every shard has its own digest and size in the manifest (and so in
+  `--reuse-assets` and `--bundle` checks); a corrupt shard fails only the
+  details that need it, reports itself in the status line, and a later attempt
+  bypasses the HTTP cache. The viewer still reads the earlier single-file form.
+- Measured (`--quality fast`): the real COCOA geometry (7,405 placements) has a
+  0.96 MiB index and 2.6 MiB of shards where the single file was 7.9 MiB; a
+  first pick transfers about 1 MiB (the index plus one 90 KiB shard). At 100,000
+  placements the index is 4.9 MiB (it was 58 MiB as one file).
+- Not done: splitting the *index* itself (the tree and filters need every
+  placement, so it is loaded whole), delta or binary encoding of the index, and
+  fetching shards ahead of need. The index still costs about 50 to 140 bytes
+  per placement (long Geant4 names cost most).
+- A name containing `/` is stored as the path suffix below its parent, so paths
+  and the "name is the last path segment" rule round-trip unchanged.
+
+`--reuse-assets` refuses output from before v2 and asks for a rebuild.
 
 **Provenance.** Every export carries `schemaVersion: 2` and a `provenance`
 block: tool and backend names/versions, the input file's name and sha256, the

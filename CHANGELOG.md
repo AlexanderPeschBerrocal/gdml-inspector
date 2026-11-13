@@ -54,6 +54,13 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Placements metadata is split into a compact columnar index plus per-chunk
+  detail shards (bounding boxes and transforms). The tree, filters and picking
+  use the index only; the inspector and Focus fetch just the shard of the chunk
+  they need (digest-checked, with a local error and retry). On the real COCOA
+  geometry the index is 0.96 MiB against the 7.9 MiB single file, and a first
+  pick transfers about 1 MiB; at 100,000 placements the index is 4.9 MiB
+  against 58 MiB. Older exports with the single file still open.
 - Instanced lazy chunks (format v3, `--instancing auto|off|always`, default
   `auto`): each distinct mesh is stored once per chunk with a matrix and object
   id per placement, and the viewer draws it with instanced calls (with a CPU

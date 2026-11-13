@@ -117,15 +117,18 @@ function buildInspector(root, {emptyText = 'Click a point in the detector view.'
 // Builds `info` from a hierarchy node plus, for a rendered placement, its
 // object record and solid table entry. Shared so standalone and lazy format
 // every field identically. `approximatedSolids` is a Set of solid refs.
-function inspectorInfo(nodeByPath, node, object, solids, approximatedSolids, note) {
+// `detailsPending` marks transforms and bounds a lazy viewer has not fetched yet.
+function inspectorInfo(nodeByPath, node, object, solids, approximatedSolids, note, detailsPending = false) {
   const info = {
     path: node.path,
     name: node.name,
     semanticPath: inspectorSemanticPath(nodeByPath, node.path),
     volume: node.volume,
     semanticVolume: node.semanticVolume,
-    localMatrix: node.localMatrix ? inspectorMatrixRows(node.localMatrix) : '(world root)',
-    globalMatrix: node.globalMatrix ? inspectorMatrixRows(node.globalMatrix) : '--',
+    localMatrix: detailsPending ? 'loading…'
+      : node.localMatrix ? inspectorMatrixRows(node.localMatrix) : '(world root)',
+    globalMatrix: detailsPending ? 'loading…'
+      : node.globalMatrix ? inspectorMatrixRows(node.globalMatrix) : '--',
     note,
   };
   if (node.rendered && object) {
@@ -133,7 +136,7 @@ function inspectorInfo(nodeByPath, node, object, solids, approximatedSolids, not
     info.material = object.material;
     info.solidType = object.solidType;
     info.params = inspectorParams(solidInfo.params);
-    info.bounds = inspectorBounds(object.bbox);
+    info.bounds = detailsPending ? 'loading…' : inspectorBounds(object.bbox);
     info.approximated = approximatedSolids.has(object.solid);
   } else {
     info.material = `(none -- ${node.isAssembly ? 'assembly' : 'container'}, not rendered)`;

@@ -93,8 +93,13 @@ _LAZY_PROJECT = """([wx, wy, wz]) => {
 
 
 def object_center(page, path):
+    # Bounding boxes live in per-chunk shards; make sure they are all loaded.
     bbox = page.evaluate(
-        f"placements.objects.find(o => o.path === {json.dumps(path)}).bbox"
+        """async path => {
+          await ensureAllDetails();
+          return placements.objects.find(o => o.path === path).bbox;
+        }""",
+        path,
     )
     return [(bbox[i] + bbox[i + 3]) / 2 for i in range(3)]
 

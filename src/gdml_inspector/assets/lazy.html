@@ -826,24 +826,65 @@ const inspector = buildInspector(document.getElementById('details'), {
 });
 let placements = null, placementsPromise = null;
 
+// Fetches an asset and, when the manifest recorded a digest, verifies it.
+async function fetchVerified(entry, bypassCache = false) {
+  const response = await fetch(entry.url, bypassCache ? {cache: 'reload'} : undefined);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const data = await response.arrayBuffer();
+  if (entry.sha256) {
+    const actual = await sha256Hex(data);
+    if (actual !== null && actual !== entry.sha256) {
+      throw new Error(`${entry.url} fails its recorded sha256 (expected ${entry.sha256.slice(0, 12)}…, got ${actual.slice(0, 12)}…): it is corrupt or was edited after export.`);
+    }
+  }
+  return JSON.parse(new TextDecoder().decode(data));
+}
+
+// The placements index (format 2) is columnar and string-interned; rebuild the
+// same node and object records the single-file form carried, minus the details
+// (bounding boxes and transforms) that live in per-chunk shards.
+function expandPlacementsIndex(doc) {
+  const strings = doc.strings, n = doc.nodes, o = doc.objects;
+  const nodes = new Array(n.name.length);
+  for (let i = 0; i < nodes.length; i++) {
+    const parent = n.parent[i];
+    const path = parent < 0 ? n.name[i] : `${nodes[parent].path}/${n.name[i]}`;
+    const name = path.slice(path.lastIndexOf('/') + 1);
+    const node = {
+      path, parentPath: parent < 0 ? null : nodes[parent].path, name,
+      semanticName: n.semName[i] < 0 ? name : strings[n.semName[i]],
+      volume: strings[n.volume[i]], semanticVolume: strings[n.semVolume[i]],
+      isAssembly: Boolean(n.flags[i] & 2), rendered: Boolean(n.flags[i] & 1),
+    };
+    if (n.object[i] >= 0) node.objectId = n.object[i];
+    nodes[i] = node;
+  }
+  const objects = new Array(o.node.length);
+  for (let j = 0; j < objects.length; j++) {
+    const node = nodes[o.node[j]];
+    objects[j] = {
+      id: j, path: node.path, name: node.name, semanticName: node.semanticName,
+      volume: node.volume, semanticVolume: node.semanticVolume,
+      material: strings[o.material[j]], solid: strings[o.solid[j]], solidType: strings[o.solidType[j]],
+      chunkIndex: o.chunk[j], chunk: MANIFEST.chunks[o.chunk[j]].baseKey,
+    };
+  }
+  return {nodes, objects, solids: doc.solids};
+}
+
 function ensurePlacements() {
   if (!pickingSupported) return Promise.resolve(null);
   if (!placementsPromise) {
     const entry = MANIFEST.placements;
     placementsPromise = (async () => {
-      const response = await fetch(entry.url);
-      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      const data = await response.arrayBuffer();
-      if (entry.sha256) {
-        const actual = await sha256Hex(data);
-        if (actual !== null && actual !== entry.sha256) {
-          throw new Error(`${entry.url} fails its recorded sha256 (expected ${entry.sha256.slice(0, 12)}…, got ${actual.slice(0, 12)}…): it is corrupt or was edited after export.`);
-        }
-      }
-      const doc = JSON.parse(new TextDecoder().decode(data));
+      const doc = await fetchVerified(entry);
+      const legacy = doc.format !== 2;
+      const model = legacy ? {nodes: doc.nodes, objects: doc.objects, solids: doc.solids} : expandPlacementsIndex(doc);
       placements = {
-        nodes: doc.nodes, objects: doc.objects, solids: doc.solids,
-        nodeByPath: Object.fromEntries(doc.nodes.map(n => [n.path, n])),
+        ...model, legacy,
+        nodeByPath: Object.fromEntries(model.nodes.map(node => [node.path, node])),
+        // Detail shards already fetched (true) or in flight (promise), by chunk index.
+        shards: new Map(), containers: null,
       };
       return placements;
     })().catch(error => {
@@ -853,6 +894,51 @@ function ensurePlacements() {
     });
   }
   return placementsPromise;
+}
+
+// Bounding boxes and transforms come from per-chunk shards, fetched when an
+// inspector or a "focus" needs them (the single-file form carries them already).
+function applyShard(shard) {
+  shard.objects.forEach((id, k) => {
+    placements.objects[id].bbox = shard.bbox[k];
+    const node = placements.nodes[shard.nodes[k]];
+    if (shard.local[k]) node.localMatrix = shard.local[k];
+    if (shard.global[k]) node.globalMatrix = shard.global[k];
+  });
+}
+const failedAssets = new Set(); // a retry of these bypasses the HTTP cache
+function loadShard(key, entry, apply, store) {
+  const known = store.get(key);
+  if (known) return known === true ? Promise.resolve(true) : known;
+  const promise = fetchVerified(entry, failedAssets.has(entry.url)).then(doc => { apply(doc); store.set(key, true); return true; }).catch(error => {
+    failedAssets.add(entry.url);
+    store.delete(key); // a later attempt retries
+    updateStatus(`Could not load the placement details ${entry.url}.\n${error}`, 'error');
+    return false;
+  });
+  store.set(key, promise);
+  return promise;
+}
+// Resolves true once the details for the given chunk indices (and, if asked,
+// the non-rendered containers) are in memory.
+async function ensureDetails(chunkIndices, containers = false) {
+  if (!placements || placements.legacy) return true;
+  const entry = MANIFEST.placements;
+  const jobs = [...new Set(chunkIndices)].map(index => loadShard(index, entry.shards[index], applyShard, placements.shards));
+  if (containers) {
+    const state = {get: () => placements.containers, set: (_k, v) => { placements.containers = v; }, delete: () => { placements.containers = null; }};
+    jobs.push(loadShard('containers', entry.containers, doc => {
+      doc.nodes.forEach((index, k) => { if (doc.local[k]) placements.nodes[index].localMatrix = doc.local[k]; });
+    }, state));
+  }
+  return (await Promise.all(jobs)).every(Boolean);
+}
+function ensureAllDetails() {
+  return ensureDetails(MANIFEST.chunks.map((_c, index) => index), true);
+}
+function detailsReady(node, object) {
+  if (!placements || placements.legacy) return true;
+  return object ? placements.shards.get(object.chunkIndex) === true : placements.containers === true;
 }
 
 function objectGeometryShown(object) {
@@ -866,7 +952,12 @@ function refreshInspector() {
   const note = object && !objectGeometryShown(object)
     ? `Geometry not shown: its layer (${object.chunk.replace('\x1f', ' / ')}) is not loaded or is hidden. The details below come from the placement metadata.`
     : undefined;
-  inspector.show(inspectorInfo(placements.nodeByPath, node, object, placements.solids, approximatedSolids, note));
+  const pending = !detailsReady(node, object);
+  inspector.show(inspectorInfo(placements.nodeByPath, node, object, placements.solids, approximatedSolids, note, pending));
+  if (pending) {
+    // Transforms and bounds live in a shard; fetch it, then redraw if the same placement is still selected.
+    ensureDetails(object ? [object.chunkIndex] : [], !object).then(ok => { if (ok && selectedPath === node.path) refreshInspector(); });
+  }
 }
 function clearSelection() {
   selectedObjectId = null; selectedPath = null;
@@ -995,9 +1086,24 @@ if (!pickingSupported) {
   document.getElementById('loadHierarchy').disabled = true;
   document.getElementById('hierarchyNote').textContent = 'The hierarchy is unavailable: this export predates per-object ids and the placements file. Re-export with this version of gdml-inspector.';
 }
-function focusOnPath(path) {
+let focusInFlight = 0; // focus waits for shards; tests and callers can wait for 0
+async function focusOnPath(path) {
+  focusInFlight++;
+  try { await focusOnPathNow(path); } finally { focusInFlight--; }
+}
+async function focusOnPathNow(path) {
   if (!placements) return;
-  const box = focusBounds(ensureTree(placements), id => placements.objects[id], path);
+  const tree = ensureTree(placements);
+  // The camera target needs the bounding boxes of the subtree's objects (or of
+  // the nearest ancestor that has any), which live in their chunks' shards.
+  let probe = path, ids = tree.subtreeObjectIds(probe);
+  while (!ids.length) {
+    const node = tree.nodeByPath[probe];
+    if (!node || node.parentPath === null) break;
+    probe = node.parentPath; ids = tree.subtreeObjectIds(probe);
+  }
+  if (!await ensureDetails(ids.map(id => placements.objects[id].chunkIndex))) return;
+  const box = focusBounds(tree, id => placements.objects[id], path);
   if (!box) { viewCenter = center.slice(); dist = radius * 1.35; }
   else {
     viewCenter = [(box[0] + box[3]) / 2, (box[1] + box[4]) / 2, (box[2] + box[5]) / 2];
