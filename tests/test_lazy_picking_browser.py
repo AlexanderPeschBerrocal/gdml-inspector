@@ -252,9 +252,9 @@ def test_corrupt_placements_file_is_reported_and_rendering_continues(
 
 
 def test_a_v1_export_still_renders_and_reports_picking_unavailable(
-    watched_page, served, lazy_scene_dir, tmp_path
+    watched_page, served, lazy_scene_baked_dir, tmp_path
 ):
-    export = copy_of(lazy_scene_dir, tmp_path)
+    export = copy_of(lazy_scene_baked_dir, tmp_path)
     downgrade_to_v1(export)
     page = watched_page.page
     page.set_viewport_size(VIEWPORT)

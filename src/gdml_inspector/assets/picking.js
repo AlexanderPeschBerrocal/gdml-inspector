@@ -15,7 +15,7 @@
 // `draw` supplies the geometry, so each viewer decides what is pickable
 // (the standalone viewer: visible objects; the lazy viewer: loaded, visible
 // chunks). The picker restores the viewport, framebuffer and program.
-function createPicker(gl, {visibility = false} = {}) {
+function createPicker(gl, {visibility = false, instanced = false} = {}) {
   function compile(type, source) {
     const s = gl.createShader(type); gl.shaderSource(s, source); gl.compileShader(s);
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
@@ -24,16 +24,6 @@ function createPicker(gl, {visibility = false} = {}) {
   const visDecl = visibility ? 'attribute float a_vis; varying float v_vis;' : '';
   const visSet = visibility ? 'v_vis = a_vis;' : '';
   const visTest = visibility ? 'if (v_vis < 0.5) discard;' : '';
-  const vs = compile(gl.VERTEX_SHADER, `
-attribute vec3 a_pos; attribute vec4 a_id_color; ${visDecl}
-uniform mat4 u_mvp;
-varying vec4 v_id_color; varying vec3 v_pos;
-void main() {
-  gl_Position = u_mvp * vec4(a_pos, 1.0);
-  v_id_color = a_id_color;
-  v_pos = a_pos;
-  ${visSet}
-}`);
   const fs = compile(gl.FRAGMENT_SHADER, CLIP_FRAGMENT_PRECISION + `
 varying vec4 v_id_color; varying vec3 v_pos; ${visibility ? 'varying float v_vis;' : ''}
 ` + CLIP_GLSL + `
@@ -42,16 +32,48 @@ void main() {
   if (clipDiscard(v_pos)) discard;
   gl_FragColor = v_id_color;
 }`);
-  const program = gl.createProgram();
-  gl.attachShader(program, vs); gl.attachShader(program, fs); gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
-  const locs = {
-    pos: gl.getAttribLocation(program, 'a_pos'),
-    idColor: gl.getAttribLocation(program, 'a_id_color'),
-    vis: visibility ? gl.getAttribLocation(program, 'a_vis') : -1,
-  };
-  const uMvp = gl.getUniformLocation(program, 'u_mvp');
-  const clipLoc = clipLocations(gl, program);
+  // One id program per geometry layout. The baked layout carries world-space
+  // positions; the instanced layout carries local positions plus, per
+  // instance, a 3x4 matrix (three vec4 rows), the id colour and visibility.
+  function build(vertexSource, names) {
+    const program = gl.createProgram();
+    gl.attachShader(program, compile(gl.VERTEX_SHADER, vertexSource));
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+    const locs = {};
+    for (const [key, attribute] of Object.entries(names)) {
+      locs[key] = visibility || key !== 'vis' ? gl.getAttribLocation(program, attribute) : -1;
+    }
+    return {
+      program, locs,
+      uMvp: gl.getUniformLocation(program, 'u_mvp'),
+      clipLoc: clipLocations(gl, program),
+    };
+  }
+  const baked = build(`
+attribute vec3 a_pos; attribute vec4 a_id_color; ${visDecl}
+uniform mat4 u_mvp;
+varying vec4 v_id_color; varying vec3 v_pos;
+void main() {
+  gl_Position = u_mvp * vec4(a_pos, 1.0);
+  v_id_color = a_id_color;
+  v_pos = a_pos;
+  ${visSet}
+}`, {pos: 'a_pos', idColor: 'a_id_color', vis: 'a_vis'});
+  const inst = instanced ? build(`
+attribute vec3 a_pos; attribute vec4 a_m0; attribute vec4 a_m1; attribute vec4 a_m2;
+attribute vec4 a_id_color; ${visDecl}
+uniform mat4 u_mvp;
+varying vec4 v_id_color; varying vec3 v_pos;
+void main() {
+  vec4 p = vec4(a_pos, 1.0);
+  vec3 world = vec3(dot(a_m0, p), dot(a_m1, p), dot(a_m2, p));
+  gl_Position = u_mvp * vec4(world, 1.0);
+  v_id_color = a_id_color;
+  v_pos = world;
+  ${visSet}
+}`, {pos: 'a_pos', m0: 'a_m0', m1: 'a_m1', m2: 'a_m2', idColor: 'a_id_color', vis: 'a_vis'}) : null;
 
   let fbo = null, texture = null, depth = null, fboWidth = 0, fboHeight = 0;
   function ensureFramebuffer(width, height) {
@@ -72,6 +94,9 @@ void main() {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
+  // `draw(locs, api)` draws the baked geometry with `locs`; for instanced
+  // geometry it calls api.useInstanced() (returning that program's locations)
+  // and api.useBaked() to switch back.
   function pick(devX, devY, {width, height, mvp, clip, draw}) {
     if (devX < 0 || devY < 0 || devX >= width || devY >= height) return -1;
     const previousProgram = gl.getParameter(gl.CURRENT_PROGRAM);
@@ -88,10 +113,17 @@ void main() {
     gl.clearColor(0, 0, 0, 0);
     gl.clearDepth(1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    gl.useProgram(program);
-    gl.uniformMatrix4fv(uMvp, false, mvp);
-    uploadClip(gl, clipLoc, clip);
-    draw(locs);
+    function use(layout) {
+      gl.useProgram(layout.program);
+      gl.uniformMatrix4fv(layout.uMvp, false, mvp);
+      uploadClip(gl, layout.clipLoc, clip);
+      return layout.locs;
+    }
+    const api = {
+      useBaked: () => use(baked),
+      useInstanced: () => use(inst),
+    };
+    draw(use(baked), api);
     const pixel = new Uint8Array(4);
     gl.readPixels(devX, devY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -101,7 +133,7 @@ void main() {
     return encoded === 0 ? -1 : encoded - 1;
   }
 
-  return {program, locs, pick};
+  return {program: baked.program, locs: baked.locs, pick};
 }
 
 // Bind a per-vertex id attribute: a buffer of normalised RGBA bytes
