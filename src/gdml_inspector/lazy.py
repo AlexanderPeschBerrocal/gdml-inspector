@@ -9,6 +9,7 @@ import html
 import json
 import math
 import re
+import shutil
 import struct
 import sys
 import tempfile
@@ -152,6 +153,19 @@ def classify_chunk(
 
 
 @dataclass
+class FrozenChunk:
+    """What is kept of a chunk part once it has been written to disk and its
+    arrays released: enough to describe it in the manifest."""
+
+    path: Path
+    vertices: int
+    size: int
+    sha256: str
+    layout: str
+    meshes: int | None
+
+
+@dataclass
 class Chunk:
     subsystem: str
     layer: str
@@ -172,9 +186,12 @@ class Chunk:
     object_count: int = 0
     bbox_min: list[float] = field(default_factory=lambda: [float("inf")] * 3)
     bbox_max: list[float] = field(default_factory=lambda: [float("-inf")] * 3)
+    frozen: FrozenChunk | None = None
 
     @property
     def vertex_count(self) -> int:
+        if self.frozen is not None:
+            return self.frozen.vertices
         return len(self.positions) // 3
 
     @property
@@ -222,9 +239,16 @@ class LazyBuilderMixin:
         *args: object,
         chunk_vertices: int,
         instancing: str = "auto",
+        memory_budget: int = 512,
         **kwargs: object,
     ) -> None:
         super().__init__(*args, **kwargs)
+        self.memory_budget = max(0, int(memory_budget))  # MiB; 0 = unlimited
+        # Where closed parts are written while the scene is still being built
+        # (set by the exporter; None keeps every part in memory until the end).
+        self.spill_dir: Path | None = None
+        self.open_bytes = 0  # array memory held by parts not yet written
+        self._spills = 0
         if instancing not in INSTANCING_MODES:
             raise ValueError(f"instancing must be one of {INSTANCING_MODES}")
         self.chunk_vertices = max(3, int(chunk_vertices))
@@ -246,13 +270,57 @@ class LazyBuilderMixin:
         keys = self.chunk_parts.setdefault(base_key, [])
         if keys:
             candidate = self.chunks[keys[-1]]
-            if candidate.vertex_count + incoming_vertices <= self.chunk_vertices:
+            if (
+                candidate.frozen is None
+                and candidate.vertex_count + incoming_vertices <= self.chunk_vertices
+            ):
                 return candidate
+            # This part is full (or was released early): it never grows again.
+            self._close_part(candidate)
         part = len(keys) + 1
         chunk = Chunk(subsystem=subsystem, layer=layer, part=part)
         self.chunks[chunk.key] = chunk
         keys.append(chunk.key)
         return chunk
+
+    def _close_part(self, chunk: Chunk) -> None:
+        """Write a part that will not grow any more to the spill directory and
+        release its arrays, so memory holds only the parts still being filled.
+        The bytes are exactly what the final write would produce."""
+        if chunk.frozen is not None or self.spill_dir is None:
+            return
+        data, layout, meshes = encode_chunk(chunk, self.instancing)
+        self._spills += 1
+        path = self.spill_dir / f"{self._spills:08d}.spill"
+        path.write_bytes(data)
+        freed = chunk_memory(chunk)
+        vertices = chunk.vertex_count
+        chunk.frozen = FrozenChunk(
+            path, vertices, len(data), hashlib.sha256(data).hexdigest(), layout, meshes
+        )
+        chunk.positions = array("f")
+        chunk.colors = array("B")
+        chunk.ids = array("I")
+        chunk.mesh_keys = {}
+        chunk.mesh_tris = []
+        chunk.mesh_rgba = []
+        chunk.instance_mesh = array("I")
+        chunk.instance_ids = array("I")
+        chunk.instance_matrices = array("f")
+        self.open_bytes -= freed
+
+    def _enforce_memory_budget(self) -> None:
+        """Past --memory-budget, write the largest still-open parts early. A
+        layer then continues in a new part, so a budget that is hit changes
+        where parts split (never what is drawn)."""
+        limit = self.memory_budget * 1024 * 1024
+        if not limit or self.spill_dir is None:
+            return
+        while self.open_bytes > limit:
+            open_parts = [c for c in self.chunks.values() if c.frozen is None]
+            if not open_parts:
+                break
+            self._close_part(max(open_parts, key=chunk_memory))
 
     def add_volume(self, volume: base.VolumeDef, matrix: base.Mat4, path: str) -> None:
         tris, solid_type = self.solid_mesh(volume.solid)
@@ -305,6 +373,7 @@ class LazyBuilderMixin:
             array("f", [value for row in matrix[:3] for value in row])
         )
         chunk.object_count += 1
+        self.open_bytes += vertex_count * (12 + 4 + 4) + (4 + 4 + 48)
         bbox_union(chunk.bbox_min, chunk.bbox_max, lo, hi)
         bbox_union(self.global_bbox_min, self.global_bbox_max, lo, hi)
         self.material_counts[material] += 1
@@ -313,6 +382,7 @@ class LazyBuilderMixin:
         record = base.object_record(object_id, volume, path, solid_type, lo, hi)
         self.object_table.append({**record, "chunk": chunk.key})
         self._on_object_added(path, volume, matrix, object_id)
+        self._enforce_memory_budget()
 
     def build_chunks(self) -> None:
         self.parse()
@@ -374,7 +444,7 @@ def use_instancing(chunk: Chunk, mode: str) -> bool:
     ) <= INSTANCING_RATIO * baked_size(chunk)
 
 
-def write_instanced_chunk(chunk: Chunk, path: Path) -> int:
+def encode_instanced_chunk(chunk: Chunk) -> bytes:
     _meshes, members = instanced_layout(chunk)
     table = bytearray()
     positions = array("f")
@@ -417,13 +487,28 @@ def write_instanced_chunk(chunk: Chunk, path: Path) -> int:
         id_offset,
         total_size,
     )
-    path.write_bytes(header + bytes(table) + position_bytes + matrix_bytes + id_bytes)
-    return total_size
+    return header + bytes(table) + position_bytes + matrix_bytes + id_bytes
 
 
-def write_chunk(chunk: Chunk, path: Path, instancing: str = "auto") -> int:
+def chunk_memory(chunk: Chunk) -> int:
+    """Bytes of array storage a part holds (zero once it is written)."""
+    return sum(
+        a.itemsize * len(a)
+        for a in (
+            chunk.positions,
+            chunk.colors,
+            chunk.ids,
+            chunk.instance_mesh,
+            chunk.instance_ids,
+            chunk.instance_matrices,
+        )
+    )
+
+
+def encode_chunk(chunk: Chunk, instancing: str) -> tuple[bytes, str, int | None]:
+    """The chunk file's bytes, its layout name and, if instanced, its mesh count."""
     if use_instancing(chunk, instancing):
-        return write_instanced_chunk(chunk, path)
+        return encode_instanced_chunk(chunk), "instanced", len(chunk.mesh_tris)
     positions = base.little_endian_bytes(chunk.positions)
     colors = base.little_endian_bytes(chunk.colors)
     has_ids = chunk.vertex_count > 0 and len(chunk.ids) == chunk.vertex_count
@@ -441,8 +526,13 @@ def write_chunk(chunk: Chunk, path: Path, instancing: str = "auto") -> int:
         id_offset,
         total_size,
     )
-    path.write_bytes(header + positions + colors + ids)
-    return total_size
+    return header + positions + colors + ids, "baked", None
+
+
+def write_chunk(chunk: Chunk, path: Path, instancing: str = "auto") -> int:
+    data, _layout, _meshes = encode_chunk(chunk, instancing)
+    path.write_bytes(data)
+    return len(data)
 
 
 def chunk_sort_key(chunk: Chunk) -> tuple[int, str, int]:
@@ -601,9 +691,17 @@ def write_assets(
         suffix = used_names[stem]
         file_stem = f"{stem}.part{suffix:03d}"
         binary_name = f"{file_stem}.bin"
-        instanced = use_instancing(chunk, builder.instancing)
-        byte_size = write_chunk(chunk, asset_dir / binary_name, builder.instancing)
-        digest = hashlib.sha256((asset_dir / binary_name).read_bytes()).hexdigest()
+        frozen = chunk.frozen
+        if frozen is not None:
+            # Already written while the scene was being built: move into place.
+            frozen.path.replace(asset_dir / binary_name)
+            instanced = frozen.layout == "instanced"
+            byte_size, digest, meshes = frozen.size, frozen.sha256, frozen.meshes
+        else:
+            data, layout, meshes = encode_chunk(chunk, builder.instancing)
+            (asset_dir / binary_name).write_bytes(data)
+            instanced = layout == "instanced"
+            byte_size, digest = len(data), hashlib.sha256(data).hexdigest()
         chunk_entries.append(
             {
                 "key": chunk.key,
@@ -620,7 +718,7 @@ def write_assets(
                 "vertices": chunk.vertex_count,
                 "triangles": chunk.triangle_count,
                 "layout": "instanced" if instanced else "baked",
-                "meshes": len(chunk.mesh_tris) if instanced else None,
+                "meshes": meshes if instanced else None,
                 "bytes": byte_size,
                 "bbox": [*chunk.bbox_min, *chunk.bbox_max],
             }
@@ -640,7 +738,9 @@ def write_assets(
         else FORMAT_VERSION,
         "placements": placements,
         "provenance": builder.provenance(
-            chunkVertices=builder.chunk_vertices, instancing=builder.instancing
+            chunkVertices=builder.chunk_vertices,
+            instancing=builder.instancing,
+            memoryBudgetMiB=builder.memory_budget,
         ),
         "source": builder.source_label(),
         "sourceFile": builder.gdml.name,
@@ -696,6 +796,7 @@ _SETTING_OPTIONS = {
     "max_vertices": "maxVertices",
     "chunk_vertices": "chunkVertices",
     "instancing": "instancing",
+    "memory_budget": "memoryBudgetMiB",
 }
 
 
@@ -860,6 +961,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Store repeated shapes once per chunk and draw them instanced "
         "(auto: only chunks where it saves at least 25%%; always; off: every "
         "placement's triangles are written out)",
+    )
+    parser.add_argument(
+        "--memory-budget",
+        type=int,
+        default=512,
+        metavar="MIB",
+        help="Export memory for chunk geometry still being filled. Past it, "
+        "the largest open chunk parts are written early and their layer "
+        "continues in a new part (0 = unlimited). Parts that fill up are always "
+        "written at once, so memory holds only the open ones",
     )
     parser.add_argument(
         "--default-load",
@@ -1034,9 +1145,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_vertices=args.max_vertices,
         chunk_vertices=args.chunk_vertices,
         instancing=args.instancing,
+        memory_budget=args.memory_budget,
     )
     builder.redact_paths = args.redact_paths
-    builder.build_chunks()
+    spill_dir = (
+        None
+        if args.validate_only
+        else output.parent / f"{output.stem}.assets" / ".spill"
+    )
+    try:
+        if spill_dir is not None:
+            spill_dir.mkdir(parents=True, exist_ok=True)
+            builder.spill_dir = spill_dir
+        builder.build_chunks()
+        return _finish_lazy_export(builder, args, output, view_state)
+    finally:
+        if spill_dir is not None:
+            shutil.rmtree(spill_dir, ignore_errors=True)
+
+
+def _finish_lazy_export(
+    builder: LazyBuilderMixin,
+    args: argparse.Namespace,
+    output: Path,
+    view_state: dict | None,
+) -> int:
     if args.validate_only:
         diagnostics = base.diagnostics_list(builder.scene.diagnostics)
         warnings = base.format_warnings(builder.scene.diagnostics)
