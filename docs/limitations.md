@@ -388,6 +388,43 @@ API):**
 - The caps bound the work spent on geometry: at most one rejected solid is
   meshed past the cap. They do not bound parsing the GDML itself.
 
+**Instancing (`--lazy --instancing auto|off|always`, default `auto`).**
+
+- A chunk can be stored two ways. *Baked* (format v1/v2): every placement's
+  triangles in world space. *Instanced* (format v3): each distinct mesh once, in
+  local coordinates with one colour, plus per placement a 3x4 matrix and its
+  object id (53 bytes per placement on the GPU); the viewer draws each mesh with
+  one instanced call per chunk.
+- Two placements share a mesh only if they use the same GDML solid ref **and**
+  the same colour (material) inside the same chunk. Meshes are not shared across
+  chunks, so every chunk stays independently loadable.
+- `auto` writes a chunk instanced only when its meshes repeat and it is at most
+  75% of the baked size; chunks of one-off shapes stay baked, so a scene without
+  repetition is unchanged. `always` instances every chunk; `off` never does.
+  The choice is recorded in the provenance, is part of `--reuse-assets`'
+  explicit-option check, and the export is still byte-for-byte reproducible.
+- Object ids, `placements.json` and every viewer feature (picking, highlight,
+  hide/isolate, filters, clipping) are layout-independent: tests compare the
+  decoded geometry, rendered pixels and picks of both layouts. Highlight,
+  hide/isolate and filtering work per instance through a per-instance
+  visibility byte.
+- The manifest's `vertices`/`triangles` describe what a chunk *draws*, not what
+  it stores; `layout`, `meshes` and `bytes` describe the file, and
+  `chunkFormat` is 3 when any chunk is instanced. A viewer older than this
+  feature refuses an instanced chunk with "Unsupported chunk version 3"; baked
+  exports still open everywhere.
+- Needs WebGL1's `ANGLE_instanced_arrays`. Without it the viewer expands each
+  instanced chunk into the baked layout on load (same pictures, baked memory
+  cost), so nothing depends on the extension.
+- Matrices are stored as float32 and applied on the GPU, so world positions can
+  differ from the baked layout by float32 rounding (about 1e-7 relative; the
+  tests allow 1e-3 mm). Placement bounding boxes in `placements.json` are
+  computed in double precision either way.
+- Single-file (standalone) exports are not instanced: they stay one simple
+  offline file.
+- Not done: sharing meshes across chunks, instancing the glTF export, and
+  automatic levels of detail.
+
 **Lazy loading (browser).**
 
 - At most 6 chunk requests are in flight (the "Parallel downloads" control,
@@ -402,8 +439,9 @@ API):**
   reason on hover and a **Retry** button, "Retry failed chunks" retries all, and
   other layers carry on. A retry bypasses the HTTP cache so a bad cached
   response is not served again.
-- Memory accounting: the "GPU buffers (est.)" tile is loaded vertices times 21
-  bytes (position 12, colour 4, object id 4, visibility 1); the browser also
+- Memory accounting: the "GPU buffers (est.)" tile counts 21 bytes per vertex
+  of a baked chunk (position 12, colour 4, object id 4, visibility 1) and the
+  meshes plus 53 bytes per placement of an instanced one; the browser also
   keeps a private copy of each loaded chunk's ids (4 bytes per vertex).
 - "GPU budget (MiB)" (0 = unlimited) evicts hidden-but-loaded layers, least
   recently shown first, to stay under the budget. Visible layers are never

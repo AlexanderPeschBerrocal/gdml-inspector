@@ -262,6 +262,46 @@ def lazy_scene_dir(tmp_path_factory, lazy_scene_gdml):
 
 
 @pytest.fixture(scope="module")
+def lazy_scene_baked_dir(tmp_path_factory, lazy_scene_gdml):
+    directory = tmp_path_factory.mktemp("lazy-pick-baked")
+    assert (
+        cli.main(
+            [
+                "--lazy",
+                "--instancing",
+                "off",
+                str(lazy_scene_gdml),
+                *QUALITY,
+                "--out",
+                str(directory / "v.html"),
+            ]
+        )
+        == 0
+    )
+    return directory
+
+
+@pytest.fixture(scope="module")
+def lazy_scene_instanced_dir(tmp_path_factory, lazy_scene_gdml):
+    directory = tmp_path_factory.mktemp("lazy-pick-instanced")
+    assert (
+        cli.main(
+            [
+                "--lazy",
+                "--instancing",
+                "always",
+                str(lazy_scene_gdml),
+                *QUALITY,
+                "--out",
+                str(directory / "v.html"),
+            ]
+        )
+        == 0
+    )
+    return directory
+
+
+@pytest.fixture(scope="module")
 def lazy_scene_standalone(tmp_path_factory, lazy_scene_gdml):
     out = tmp_path_factory.mktemp("lazy-pick-standalone") / "s.html"
     assert cli.main([str(lazy_scene_gdml), *QUALITY, "--out", str(out)]) == 0

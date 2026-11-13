@@ -11,6 +11,7 @@ QUALITY = ["--backend", "python", "--quality", "medium"]
 LAYER = {
     "world/ecal_a": "ECAL\x1fBarrel layer 1",
     "world/ecal_c": "ECAL\x1fBarrel layer 1",  # shares a chunk with ecal_a
+    "world/ecal_d": "ECAL\x1fBarrel layer 1",  # a second mesh in that chunk
     "world/hcal_b": "HCAL\x1fBarrel layer 1",
     "world/front": "Other\x1ffront_box",
     "world/back": "Other\x1fback_box",
@@ -24,9 +25,11 @@ GDML_TEXT = """<?xml version="1.0"?>
 <box name="world_box" x="1000" y="1000" z="1000" lunit="mm"/>
 <box name="shape" x="2" y="4" z="6" lunit="mm"/>
 <box name="overlap_shape" x="20" y="20" z="6" lunit="mm"/>
+<box name="wide_shape" x="6" y="3" z="3" lunit="mm"/>
 </solids>
 <structure>
 <volume name="ecal1_vol"><materialref ref="G4_Fe"/><solidref ref="shape"/></volume>
+<volume name="ecal1_wide"><materialref ref="G4_Fe"/><solidref ref="wide_shape"/></volume>
 <volume name="hcal1_vol"><materialref ref="G4_Fe"/><solidref ref="shape"/></volume>
 <volume name="child"><materialref ref="G4_Fe"/><solidref ref="shape"/></volume>
 <volume name="container"><materialref ref="Galactic"/><solidref ref="world_box"/>
@@ -41,6 +44,8 @@ GDML_TEXT = """<?xml version="1.0"?>
     <position x="-50" y="0" z="0" unit="mm"/></physvol>
   <physvol name="ecal_c"><volumeref ref="ecal1_vol"/>
     <position x="-80" y="0" z="0" unit="mm"/></physvol>
+  <physvol name="ecal_d"><volumeref ref="ecal1_wide"/>
+    <position x="-65" y="0" z="0" unit="mm"/></physvol>
   <physvol name="hcal_b"><volumeref ref="hcal1_vol"/>
     <position x="50" y="0" z="0" unit="mm"/></physvol>
   <physvol name="group"><volumeref ref="container"/></physvol>

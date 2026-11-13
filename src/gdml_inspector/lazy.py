@@ -33,7 +33,22 @@ MAGIC = b"GDMLCHN1"
 # object) in the id section the v1 header already reserved. The viewer reads
 # both; the writer emits 2 whenever a chunk carries ids.
 FORMAT_VERSION = 2
+# 3: instanced. One copy of each distinct mesh (local coordinates, one colour)
+# plus, per placement, a 3x4 matrix and its object id; the viewer draws each
+# mesh once per instance. Written only for a chunk where that is clearly
+# smaller (--instancing auto) or always (--instancing always); otherwise the
+# baked v2 layout above is used, so a chunk of one-off shapes costs nothing.
+INSTANCED_VERSION = 3
 HEADER = struct.Struct("<8s6I")
+# magic, version, meshes, instances, mesh vertices, positions offset, matrices
+# offset, ids offset, end offset; the mesh table follows the header directly.
+INSTANCED_HEADER = struct.Struct("<8s8I")
+# first vertex, vertex count, rgba, first instance, instance count
+INSTANCED_MESH = struct.Struct("<II4BII")
+# Auto-instancing keeps a chunk instanced only if it is at most this fraction
+# of the baked size, so a layer with little repetition stays on the simple path.
+INSTANCING_RATIO = 0.75
+INSTANCING_MODES = ("auto", "off", "always")
 PLACEMENTS_NAME = "placements.json"
 assert array("I").itemsize == 4, "the chunk id section needs 32-bit unsigned items"
 SUBSYSTEM_ORDER = {
@@ -137,6 +152,16 @@ class Chunk:
     positions: array = field(default_factory=lambda: array("f"))
     colors: array = field(default_factory=lambda: array("B"))
     ids: array = field(default_factory=lambda: array("I"))
+    # Instanced description of the same objects (see write_instanced_chunk):
+    # one entry per distinct (solid, colour) in `mesh_keys`, and per object its
+    # mesh index, id + 1 and 3x4 matrix. Kept beside the baked arrays so the
+    # layout is chosen when the chunk is written.
+    mesh_keys: dict[tuple[str, tuple[int, ...]], int] = field(default_factory=dict)
+    mesh_tris: list[list] = field(default_factory=list)
+    mesh_rgba: list[tuple[int, ...]] = field(default_factory=list)
+    instance_mesh: array = field(default_factory=lambda: array("I"))
+    instance_ids: array = field(default_factory=lambda: array("I"))
+    instance_matrices: array = field(default_factory=lambda: array("f"))
     object_count: int = 0
     bbox_min: list[float] = field(default_factory=lambda: [float("inf")] * 3)
     bbox_max: list[float] = field(default_factory=lambda: [float("-inf")] * 3)
@@ -185,9 +210,18 @@ class LazyBuilderMixin:
     _on_object_added: Callable[..., None]
     _admit_object: Callable[[str, int, int, int], bool]
 
-    def __init__(self, *args: object, chunk_vertices: int, **kwargs: object) -> None:
+    def __init__(
+        self,
+        *args: object,
+        chunk_vertices: int,
+        instancing: str = "auto",
+        **kwargs: object,
+    ) -> None:
         super().__init__(*args, **kwargs)
+        if instancing not in INSTANCING_MODES:
+            raise ValueError(f"instancing must be one of {INSTANCING_MODES}")
         self.chunk_vertices = max(3, int(chunk_vertices))
+        self.instancing = instancing
         self.chunks: OrderedDict[str, Chunk] = OrderedDict()
         self.chunk_parts: dict[str, list[str]] = {}
         self.total_vertices = 0
@@ -251,6 +285,18 @@ class LazyBuilderMixin:
         chunk.positions.extend(positions)
         chunk.colors.extend(array("B", rgba) * vertex_count)
         chunk.ids.extend(array("I", [object_id + 1]) * vertex_count)
+        mesh_key = (volume.solid, tuple(rgba))
+        mesh_index = chunk.mesh_keys.get(mesh_key)
+        if mesh_index is None:
+            mesh_index = len(chunk.mesh_tris)
+            chunk.mesh_keys[mesh_key] = mesh_index
+            chunk.mesh_tris.append(tris)
+            chunk.mesh_rgba.append(tuple(rgba))
+        chunk.instance_mesh.append(mesh_index)
+        chunk.instance_ids.append(object_id + 1)
+        chunk.instance_matrices.extend(
+            array("f", [value for row in matrix[:3] for value in row])
+        )
         chunk.object_count += 1
         bbox_union(chunk.bbox_min, chunk.bbox_max, lo, hi)
         bbox_union(self.global_bbox_min, self.global_bbox_max, lo, hi)
@@ -282,7 +328,95 @@ class LazyPyg4ometrySceneBuilder(
     pass
 
 
-def write_chunk(chunk: Chunk, path: Path) -> int:
+def instanced_layout(chunk: Chunk) -> tuple[list[int], list[list[int]]]:
+    """Meshes in first-use order and, per mesh, its instances (indices into
+    the chunk's instance arrays) in object order. The writer groups instances
+    by mesh so the viewer can draw each mesh with one instanced call."""
+    members: list[list[int]] = [[] for _ in chunk.mesh_tris]
+    for index, mesh in enumerate(chunk.instance_mesh):
+        members[mesh].append(index)
+    return list(range(len(chunk.mesh_tris))), members
+
+
+def instanced_size(chunk: Chunk) -> int:
+    """Bytes the chunk would take in the instanced layout."""
+    mesh_vertices = sum(len(tris) * 3 for tris in chunk.mesh_tris)
+    return (
+        INSTANCED_HEADER.size
+        + INSTANCED_MESH.size * len(chunk.mesh_tris)
+        + 12 * mesh_vertices
+        + (48 + 4) * len(chunk.instance_mesh)
+    )
+
+
+def baked_size(chunk: Chunk) -> int:
+    return HEADER.size + chunk.vertex_count * (12 + 4 + 4)
+
+
+def use_instancing(chunk: Chunk, mode: str) -> bool:
+    """Whether ``chunk`` is written in the instanced layout under ``mode``."""
+    if mode == "off" or not chunk.instance_mesh:
+        return False
+    if len(chunk.instance_mesh) != chunk.object_count:
+        return False  # a hand-built chunk without a complete instance table
+    if mode == "always":
+        return True
+    # auto: only where meshes really repeat and the saving is clear.
+    return len(chunk.mesh_tris) < len(chunk.instance_mesh) and instanced_size(
+        chunk
+    ) <= INSTANCING_RATIO * baked_size(chunk)
+
+
+def write_instanced_chunk(chunk: Chunk, path: Path) -> int:
+    _meshes, members = instanced_layout(chunk)
+    table = bytearray()
+    positions = array("f")
+    matrices = array("f")
+    ids = array("I")
+    first_instance = 0
+    for mesh_index, indices in enumerate(members):
+        flat = array("f")
+        for tri in chunk.mesh_tris[mesh_index]:
+            for point in tri:
+                flat.extend(point)
+        first_vertex = len(positions) // 3
+        table += INSTANCED_MESH.pack(
+            first_vertex,
+            len(flat) // 3,
+            *chunk.mesh_rgba[mesh_index],
+            first_instance,
+            len(indices),
+        )
+        positions.extend(flat)
+        for index in indices:
+            matrices.extend(chunk.instance_matrices[index * 12 : index * 12 + 12])
+            ids.append(chunk.instance_ids[index])
+        first_instance += len(indices)
+    position_bytes = base.little_endian_bytes(positions)
+    matrix_bytes = base.little_endian_bytes(matrices)
+    id_bytes = base.little_endian_bytes(ids)
+    position_offset = INSTANCED_HEADER.size + len(table)
+    matrix_offset = position_offset + len(position_bytes)
+    id_offset = matrix_offset + len(matrix_bytes)
+    total_size = id_offset + len(id_bytes)
+    header = INSTANCED_HEADER.pack(
+        MAGIC,
+        INSTANCED_VERSION,
+        len(members),
+        len(ids),
+        len(positions) // 3,
+        position_offset,
+        matrix_offset,
+        id_offset,
+        total_size,
+    )
+    path.write_bytes(header + bytes(table) + position_bytes + matrix_bytes + id_bytes)
+    return total_size
+
+
+def write_chunk(chunk: Chunk, path: Path, instancing: str = "auto") -> int:
+    if use_instancing(chunk, instancing):
+        return write_instanced_chunk(chunk, path)
     positions = base.little_endian_bytes(chunk.positions)
     colors = base.little_endian_bytes(chunk.colors)
     has_ids = chunk.vertex_count > 0 and len(chunk.ids) == chunk.vertex_count
@@ -348,7 +482,8 @@ def write_assets(
         suffix = used_names[stem]
         file_stem = f"{stem}.part{suffix:03d}"
         binary_name = f"{file_stem}.bin"
-        byte_size = write_chunk(chunk, asset_dir / binary_name)
+        instanced = use_instancing(chunk, builder.instancing)
+        byte_size = write_chunk(chunk, asset_dir / binary_name, builder.instancing)
         digest = hashlib.sha256((asset_dir / binary_name).read_bytes()).hexdigest()
         chunk_entries.append(
             {
@@ -362,8 +497,11 @@ def write_assets(
                 "url": quote(f"{asset_dir.name}/{binary_name}"),
                 "sha256": digest,
                 "objects": chunk.object_count,
+                # Logical size: what the chunk draws, whichever way it is stored.
                 "vertices": chunk.vertex_count,
                 "triangles": chunk.triangle_count,
+                "layout": "instanced" if instanced else "baked",
+                "meshes": len(chunk.mesh_tris) if instanced else None,
                 "bytes": byte_size,
                 "bbox": [*chunk.bbox_min, *chunk.bbox_max],
             }
@@ -377,9 +515,13 @@ def write_assets(
     return {
         "format": "gdml-lazy-viewer-v1",
         "schemaVersion": base.SCHEMA_VERSION,
-        "chunkFormat": FORMAT_VERSION,
+        "chunkFormat": INSTANCED_VERSION
+        if any(c["layout"] == "instanced" for c in chunk_entries)
+        else FORMAT_VERSION,
         "placements": placements,
-        "provenance": builder.provenance(chunkVertices=builder.chunk_vertices),
+        "provenance": builder.provenance(
+            chunkVertices=builder.chunk_vertices, instancing=builder.instancing
+        ),
         "source": builder.source_label(),
         "sourceFile": builder.gdml.name,
         "backend": builder.backend_name,
@@ -433,6 +575,7 @@ _SETTING_OPTIONS = {
     "max_objects": "maxObjects",
     "max_vertices": "maxVertices",
     "chunk_vertices": "chunkVertices",
+    "instancing": "instancing",
 }
 
 
@@ -589,6 +732,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=500_000,
         help="Maximum vertices per binary chunk; large layers are split into parts",
+    )
+    parser.add_argument(
+        "--instancing",
+        choices=INSTANCING_MODES,
+        default="auto",
+        help="Store repeated shapes once per chunk and draw them instanced "
+        "(auto: only chunks where it saves at least 25%%; always; off: every "
+        "placement's triangles are written out)",
     )
     parser.add_argument(
         "--default-load",
@@ -762,6 +913,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_objects=args.max_objects,
         max_vertices=args.max_vertices,
         chunk_vertices=args.chunk_vertices,
+        instancing=args.instancing,
     )
     builder.redact_paths = args.redact_paths
     builder.build_chunks()

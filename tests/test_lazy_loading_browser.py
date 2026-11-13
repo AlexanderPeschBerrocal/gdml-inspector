@@ -354,14 +354,21 @@ def test_visible_layers_are_never_evicted_and_the_overrun_is_reported(
     assert "over the" in page.inner_text("#status")
 
 
-def test_gpu_estimate_matches_the_loaded_vertices(watched_page, served, lazy_scene_dir):
+def test_gpu_estimate_matches_the_loaded_buffers(watched_page, served, lazy_scene_dir):
     page = open_lazy(watched_page, served, lazy_scene_dir)
     page.click("#loadAll")
     page.wait_for_function("Object.values(states).every(s => s.loaded)")
-    vertices = page.evaluate(
-        "Object.values(states).reduce((n, s) => n + s.buffers.count, 0)"
+    # A baked chunk costs 21 bytes per vertex; an instanced chunk its meshes
+    # plus 53 bytes per instance, which is less than baking every instance.
+    rows = page.evaluate(
+        "Object.values(states).map(s => [s.buffers.kind, s.buffers.count, s.buffers.gpuBytes])"
     )
-    assert page.evaluate("gpuBytes()") == vertices * 21
+    for kind, vertices, gpu in rows:
+        if kind == "baked":
+            assert gpu == vertices * 21
+        else:
+            assert 0 < gpu < vertices * 21
+    assert page.evaluate("gpuBytes()") == sum(gpu for _k, _v, gpu in rows)
     assert page.inner_text("#loadedGpu").split()[0] != "0"
 
 

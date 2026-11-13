@@ -43,7 +43,10 @@ uv run --no-sync pytest tests/test_*browser*.py \
 - **What is covered:** both programs' shaders link with no GL error; the
   camera presets, opacity, wireframe, axes, dark-mode, clipping, material and
   hierarchy/picking/diagnostics controls (standalone); lazy picking
-  (`test_lazy_loading_browser.py`: held and altered chunk responses prove the
+  (`test_instancing.py` decodes v3 chunks independently and compares them with the
+  baked layout; `test_lazy_instancing_browser.py` compares pixels, picks,
+  highlight, hide/isolate, filters, clipping and the CPU fallback across
+  layouts; `test_lazy_loading_browser.py`: held and altered chunk responses prove the
   download bound, queued and in-flight cancellation, buffer accounting under
   rapid toggling, local failures with retry, corrupt chunks and eviction;
   `test_benchmarks.py` keeps the stress generator and runner working;

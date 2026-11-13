@@ -45,6 +45,9 @@ load before it is recorded as "did not load".
 
 ## Baseline
 
+The baseline below predates instancing: its lazy rows are what `--instancing off`
+produces today.
+
 Measured on one Linux machine (64 cores, 124 GB RAM, Python 3.12.16), exports
 with `--quality fast`, browser metrics from headless Chromium using **software
 WebGL (SwiftShader)**. The frame rates therefore describe the software rasteriser
@@ -65,6 +68,27 @@ RSS are single runs. Regenerate with the commands above before comparing.
 | COCOA geantino scan (python backend, 7,405 placements) | lazy | 1.9 | 105.1 | 20.7 | 0.2 | 3.6 | 3 | 20.7 | 13.2 |
 | COCOA geantino scan (pyg4ometry, 7,405 placements) | standalone | 25.6 | 2268.0 | 317.4 | - | 15.0 | 1 | 852.6 | - |
 | COCOA geantino scan (pyg4ometry, 7,405 placements) | lazy | 18.2 | 750.9 | 91.5 | 0.2 | 12.2 | 1 | 48.1 | 87.6 |
+
+### Effect of instancing (`--instancing off` against the default `auto`)
+
+Lazy exports, `--quality fast`, same machine and software WebGL as above.
+
+| scene | instancing | output (MiB) | chunk bytes | est. GPU (MiB) | load (s) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| synthetic-medium (20,000 placements, 100 logical) | off | 52.6 | 41.2 | 43.0 | 5.5 |
+| synthetic-medium | auto | 14.7 | 3.2 | 3.0 | 3.2 |
+| COCOA, python backend | off | 20.7 | 12.8 | 13.2 | 3.3 |
+| COCOA, python backend | auto | 9.7 | 1.8 | 1.5 | 2.4 |
+| COCOA, pyg4ometry backend (4.4 million vertices) | off | 91.5 | 83.6 | 87.6 | 12.8 |
+| COCOA, pyg4ometry backend | auto | 11.2 | 3.3 | 3.2 | 3.5 |
+
+(chunk bytes = output minus `placements.json`: 11.4 MiB for the synthetic scene,
+7.9 MiB for COCOA.) Instancing shrinks the real detector's chunks about 25-fold
+and its GPU buffers about 27-fold; what remains is `placements.json`, which now
+dominates the output and is the next thing to split (slice 4). Frame rates on
+software WebGL were no better (the synthetic scene went from 3 to 1 frames per
+second): software rasterisation pays for the extra matrix work per vertex, so a
+real GPU measurement is still needed before claiming a rendering speed-up.
 
 ### What the baseline shows
 

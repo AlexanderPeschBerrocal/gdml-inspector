@@ -253,9 +253,9 @@ def test_saved_view_round_trips_tree_expansion_selection_and_focus(
 
 
 def test_a_v1_export_disables_the_hierarchy_with_an_explanation(
-    watched_page, served, lazy_scene_dir, tmp_path
+    watched_page, served, lazy_scene_baked_dir, tmp_path
 ):
-    export = copy_of(lazy_scene_dir, tmp_path)
+    export = copy_of(lazy_scene_baked_dir, tmp_path)
     downgrade_to_v1(export)
     page = watched_page.page
     page.set_viewport_size(VIEWPORT)

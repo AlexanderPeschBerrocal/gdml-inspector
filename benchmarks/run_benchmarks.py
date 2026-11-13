@@ -42,16 +42,27 @@ SYNTHETIC = {
     "large": (100_000, 200, "flat"),
     "nested": (20_000, 100, "nested"),
 }
-# GPU bytes per loaded vertex in the lazy viewer: position 3 x f32, colour 4 x u8,
-# object id 4 x u8, visibility 1 x u8. The standalone viewer keeps more.
-LAZY_GPU_BYTES_PER_VERTEX = 12 + 4 + 4 + 1
+
+
+def _without_instancing(extra: list[str]) -> list[str]:
+    result, skip = [], False
+    for item in extra:
+        if skip:
+            skip = False
+        elif item == "--instancing":
+            skip = True
+        else:
+            result.append(item)
+    return result
 
 
 def export_measured(gdml: Path, out: Path, mode: str, extra: list[str]) -> dict:
     cmd = [sys.executable, "-m", "gdml_inspector"]
     if mode == "lazy":
         cmd.append("--lazy")
-    cmd += [str(gdml), "--out", str(out), *extra]
+    # --instancing only exists for lazy exports.
+    mode_extra = extra if mode == "lazy" else _without_instancing(extra)
+    cmd += [str(gdml), "--out", str(out), *mode_extra]
     started = time.perf_counter()
     process = subprocess.Popen(
         cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
@@ -130,6 +141,7 @@ def browser_metrics(out: Path, mode: str, timeout_s: float) -> dict:
                 vertices = page.evaluate(
                     "Object.values(states).reduce((n, s) => n + (s.buffers ? s.buffers.count : 0), 0)"
                 )
+                page_gpu_bytes = page.evaluate("gpuBytes()")
             else:
                 page.wait_for_selector(
                     "#hierarchyTree .tree-row", timeout=timeout_s * 1000
@@ -155,7 +167,9 @@ def browser_metrics(out: Path, mode: str, timeout_s: float) -> dict:
         "renderer": renderer,
     }
     if mode == "lazy":
-        result["gpuBytesEstimate"] = vertices * LAZY_GPU_BYTES_PER_VERTEX
+        # The viewer's own accounting: 21 bytes per vertex for baked chunks, the
+        # meshes plus 53 bytes per instance for instanced ones.
+        result["gpuBytesEstimate"] = page_gpu_bytes
     return result
 
 
@@ -249,6 +263,12 @@ def main(argv: list[str] | None = None) -> int:
         help="meshing backend (pyg4ometry needs the extra and gives finer meshes)",
     )
     parser.add_argument(
+        "--instancing",
+        default="auto",
+        choices=("auto", "off", "always"),
+        help="lazy exports: store repeated shapes once per chunk (see --help of --lazy)",
+    )
+    parser.add_argument(
         "--repeat",
         type=int,
         default=1,
@@ -292,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
         for name, path in cases:
             # Raise the caps so the scene size, not a cap, limits the run.
             extra = [
+                "--instancing",
+                args.instancing,
                 "--backend",
                 args.backend,
                 "--quality",

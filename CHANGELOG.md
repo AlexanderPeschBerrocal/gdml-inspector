@@ -54,6 +54,14 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Instanced lazy chunks (format v3, `--instancing auto|off|always`, default
+  `auto`): each distinct mesh is stored once per chunk with a matrix and object
+  id per placement, and the viewer draws it with instanced calls (with a CPU
+  fallback). On the real COCOA geometry with pyg4ometry this cut chunk bytes
+  from 83.6 to 3.3 MiB and GPU buffers from 87.6 to 3.2 MiB. Picking, highlight,
+  hide/isolate, filters, clipping and saved views behave identically in both
+  layouts. Also fixes a rare INVALID_OPERATION on a frame drawn right after an
+  instanced chunk was unloaded.
 - Lazy viewer loading is bounded and recoverable: at most 6 chunk downloads at
   once (adjustable) with a queue and progress line; switching a layer off drops
   its queued request or aborts the one in flight and discards a late response;

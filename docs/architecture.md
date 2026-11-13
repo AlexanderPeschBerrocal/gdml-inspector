@@ -37,7 +37,12 @@ decide when to stop and how to report it, since lazy's vertices never touch
 `self.scene` and so can't be counted the same way. `diff`'s builders
 specialise only `add_volume()`/`to_dict()`, to additionally record each
 object's placement matrix and a solids-by-ref parameter table; they inherit
-the shared walk unchanged. The hierarchy tree (`tree.js`), picker (`picking.js`) and inspector
+the shared walk unchanged. Lazy chunks come in two layouts: baked (format v1/v2, world-space triangles)
+and instanced (format v3: distinct meshes plus per-placement matrices and ids).
+`write_chunk()` picks one per chunk from the `--instancing` mode; the builder
+keeps both descriptions of each chunk until then.
+
+The hierarchy tree (`tree.js`), picker (`picking.js`) and inspector
 (`inspector.js`) are shared browser assets injected into both viewers.
 Lazy chunks (format v2) carry one `objectId + 1` per vertex, and the lazy
 builders also use `HierarchyMixin` (`hierarchy.py`, fed by the
