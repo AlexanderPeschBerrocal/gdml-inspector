@@ -388,6 +388,28 @@ API):**
 - The caps bound the work spent on geometry: at most one rejected solid is
   meshed past the cap. They do not bound parsing the GDML itself.
 
+**Export memory (`--lazy --memory-budget MIB`, default 512).**
+
+- A chunk part that cannot grow any more (the next object would take it over
+  `--chunk-vertices`) is written to disk at once and its arrays released, so
+  memory holds only the parts still being filled, one per layer. This changes
+  nothing in the output: the same bytes are produced as when everything stays in
+  memory (tested byte for byte, including with instancing), and the chunks are
+  moved into place at the end.
+- A layer smaller than `--chunk-vertices` is never "full", so a scene made of
+  many small layers still holds all of its geometry. `--memory-budget` bounds
+  that: past the budget the largest open parts are written early and their layer
+  continues in a new part. Hitting the budget therefore changes where parts split
+  (never what is drawn, the ids, or the metadata), so it is recorded in the
+  provenance and checked by `--reuse-assets`. `0` means unlimited.
+- The budget counts only chunk geometry arrays, at 20 bytes per vertex plus
+  56 per object. It does **not** bound the per-placement Python metadata (the
+  hierarchy and object records, about 2.5 KB per placement, plus the parsed GDML
+  tree), which is what dominates large exports (see `docs/benchmarks.md`).
+  Compacting that metadata is not done.
+- Spill files live in `<stem>.assets/.spill/` and are removed when the export
+  ends, whether it succeeds or fails; `--validate-only` writes nothing.
+
 **Instancing (`--lazy --instancing auto|off|always`, default `auto`).**
 
 - A chunk can be stored two ways. *Baked* (format v1/v2): every placement's
