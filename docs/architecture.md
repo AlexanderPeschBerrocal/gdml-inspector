@@ -46,8 +46,9 @@ The hierarchy tree (`tree.js`), picker (`picking.js`) and inspector
 (`inspector.js`) are shared browser assets injected into both viewers.
 Lazy chunks (format v2) carry one `objectId + 1` per vertex, and the lazy
 builders also use `HierarchyMixin` (`hierarchy.py`, fed by the
-`_on_object_added()` hook) to write a `placements.json` asset: hierarchy nodes,
-an object table indexed by id, and the solids table. Standalone and lazy build
+`_on_object_added()` hook) to write the placements metadata: a compact index (hierarchy
+nodes and the per-object identifying fields, ids as positions) plus per-chunk
+detail shards (bounding boxes and transforms) fetched only when needed. Standalone and lazy build
 object records with the same `object_record()` helper, so both describe a
 placement identically.
 

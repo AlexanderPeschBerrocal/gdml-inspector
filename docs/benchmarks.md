@@ -90,6 +90,20 @@ software WebGL were no better (the synthetic scene went from 3 to 1 frames per
 second): software rasterisation pays for the extra matrix work per vertex, so a
 real GPU measurement is still needed before claiming a rendering speed-up.
 
+### Effect of splitting the placements metadata
+
+The single `placements.json` became a compact index plus per-chunk detail shards
+(see `docs/limitations.md`). Same machine, `--quality fast`:
+
+| scene | single file | index | shards (all) | a first pick fetches |
+| --- | ---: | ---: | ---: | --- |
+| COCOA, 7,405 placements | 7.9 MiB | 0.96 MiB | 2.6 MiB | about 1.0 MiB (index + one 90 KiB shard) |
+| synthetic, 20,000 placements | 11.4 MiB | 0.93 MiB | 3.0 MiB | index + one shard |
+| synthetic, 100,000 placements | 58 MiB | 4.9 MiB | 15.4 MiB | index + one shard |
+
+The whole output is smaller too (COCOA, Python backend, instancing on: 9.7 to
+5.3 MiB) because the index no longer repeats fields per node and per object.
+
 ### What the baseline shows
 
 - **Repeated placements duplicate their triangles.** The 20,000-placement scenes
@@ -104,10 +118,9 @@ real GPU measurement is still needed before claiming a rendering speed-up.
   100,000-placement standalone page (515 MiB of HTML) did not load within 150 s;
   the lazy export of the same scene loads in about 80 s on software WebGL,
   with an initial transfer of 0.3 MiB.
-- **`placements.json` is not small.** About 600 bytes per placement: 11 MiB at
-  20,000 and 58 MiB at 100,000. It is fetched on demand (first pick, hierarchy
-  or filter use), so it does not affect the initial transfer, but it will need
-  per-chunk splitting for very large scenes.
+- **`placements.json` was not small** (this baseline predates the split): about
+  600 bytes per placement, 11 MiB at 20,000 and 58 MiB at 100,000. See the next
+  section for what splitting it did.
 - **Initial transfer is tiny** (0.1 to 0.4 MiB) in every lazy scenario because the
   default layers are small; loading everything transfers the whole output.
 - The pyg4ometry backend gives the real detector about 6.6 times the vertices of

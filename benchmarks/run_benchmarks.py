@@ -98,9 +98,15 @@ def lazy_sizes(html: Path) -> dict:
         "objects": manifest["objects"],
         "vertices": manifest["vertices"],
         "initialTransferBytes": initial,
+        # The placements index, and the per-chunk detail shards beside it.
         "placementsBytes": (assets / "placements.json").stat().st_size
         if (assets / "placements.json").exists()
         else 0,
+        "shardBytes": sum(
+            p.stat().st_size
+            for p in assets.glob("placements.*.json")
+            if p.name != "placements.json"
+        ),
     }
 
 

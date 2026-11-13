@@ -50,6 +50,13 @@ INSTANCED_MESH = struct.Struct("<II4BII")
 INSTANCING_RATIO = 0.75
 INSTANCING_MODES = ("auto", "off", "always")
 PLACEMENTS_NAME = "placements.json"
+# 2: a compact, columnar index (hierarchy + the fields filters and the tree
+# need) plus per-chunk detail shards (bounding boxes and transforms), so a
+# viewer fetches only what it uses. The viewer still reads the original
+# single-file form (no `format` in the manifest entry).
+PLACEMENTS_FORMAT = 2
+SHARD_NAME = "placements.shard-{index:04d}.json"
+CONTAINERS_SHARD_NAME = "placements.containers.json"
 assert array("I").itemsize == 4, "the chunk id section needs 32-bit unsigned items"
 SUBSYSTEM_ORDER = {
     "Tracker": 0,
@@ -304,7 +311,7 @@ class LazyBuilderMixin:
         self.total_vertices += vertex_count
         self.total_objects += 1
         record = base.object_record(object_id, volume, path, solid_type, lo, hi)
-        self.object_table.append({**record, "chunk": chunk.base_key})
+        self.object_table.append({**record, "chunk": chunk.key})
         self._on_object_added(path, volume, matrix, object_id)
 
     def build_chunks(self) -> None:
@@ -442,29 +449,141 @@ def chunk_sort_key(chunk: Chunk) -> tuple[int, str, int]:
     return SUBSYSTEM_ORDER.get(chunk.subsystem, 99), chunk.layer, chunk.part
 
 
-def write_placements(builder: LazyBuilderMixin, asset_dir: Path) -> dict:
-    """Every object's identity and metadata, plus the hierarchy and the solids
-    table, in one JSON file beside the chunks. It is separate from the HTML so
-    the page stays small and a viewer can describe an object whose chunk it
-    has not fetched (or has unloaded). Entry ``objects[i]`` is object id ``i``,
-    the same id stored per vertex in the chunks. One file suits COCOA-scale
-    scenes; splitting it per chunk is future scale work."""
-    nodes = builder.hierarchy_nodes()
-    document = {
-        "schemaVersion": base.SCHEMA_VERSION,
-        "nodes": nodes,
-        "objects": builder.object_table,
-        "solids": builder.solids_table(),
-    }
+def _asset_entry(asset_dir: Path, name: str, document: object) -> dict:
     data = json.dumps(document, separators=(",", ":")).encode("utf-8")
-    (asset_dir / PLACEMENTS_NAME).write_bytes(data)
+    (asset_dir / name).write_bytes(data)
     return {
-        "url": quote(f"{asset_dir.name}/{PLACEMENTS_NAME}"),
+        "url": quote(f"{asset_dir.name}/{name}"),
         "sha256": hashlib.sha256(data).hexdigest(),
         "bytes": len(data),
+    }
+
+
+def write_placements(
+    builder: LazyBuilderMixin, asset_dir: Path, chunk_index: dict[str, int]
+) -> dict:
+    """Every object's identity and metadata, split so each consumer fetches
+    only what it needs. Entry ``objects[i]`` is object id ``i``, the same id
+    stored per vertex in the chunks.
+
+    *Index* (``placements.json``, columnar): the placement tree and, per
+    object, the identifying fields filters and the hierarchy use (names,
+    volume, material, solid, owning chunk). Repeated strings live once in a
+    shared table. *Shards*: per chunk, the details only an inspector or a
+    "focus" needs (bounding boxes, local and global transforms), plus one for
+    the non-rendered containers. Their digests are in the manifest."""
+    nodes = builder.hierarchy_nodes()
+    node_index = {node["path"]: i for i, node in enumerate(nodes)}
+    strings: dict[str, int] = {}
+
+    def intern(text: str) -> int:
+        return strings.setdefault(text, len(strings))
+
+    columns: dict[str, list] = {
+        "name": [],  # the path below the parent (the whole path for the root)
+        "parent": [],
+        "semName": [],  # string index, or -1 when the same as the last segment
+        "volume": [],
+        "semVolume": [],
+        "flags": [],  # 1 rendered, 2 assembly
+        "object": [],
+    }
+    for node in nodes:
+        parent = node["parentPath"]
+        path = node["path"]
+        if parent is None:
+            columns["parent"].append(-1)
+            columns["name"].append(path)
+        else:
+            assert path.startswith(parent + "/")
+            columns["parent"].append(node_index[parent])
+            columns["name"].append(path[len(parent) + 1 :])
+        last = path.rsplit("/", 1)[-1]
+        columns["semName"].append(
+            -1 if node["semanticName"] == last else intern(node["semanticName"])
+        )
+        columns["volume"].append(intern(node["volume"]))
+        columns["semVolume"].append(intern(node["semanticVolume"]))
+        columns["flags"].append(
+            (1 if node["rendered"] else 0) | (2 if node["isAssembly"] else 0)
+        )
+        columns["object"].append(node.get("objectId", -1))
+
+    object_columns: dict[str, list] = {
+        "node": [],
+        "material": [],
+        "solid": [],
+        "solidType": [],
+        "chunk": [],
+    }
+    by_chunk: dict[int, list[dict]] = {}
+    for record in builder.object_table:
+        index = chunk_index[str(record["chunk"])]
+        object_columns["node"].append(node_index[str(record["path"])])
+        object_columns["material"].append(intern(str(record["material"])))
+        object_columns["solid"].append(intern(str(record["solid"])))
+        object_columns["solidType"].append(intern(str(record["solidType"])))
+        object_columns["chunk"].append(index)
+        by_chunk.setdefault(index, []).append(record)
+
+    shards: list[dict] = []
+    for index in range(len(chunk_index)):
+        records = by_chunk.get(index, [])
+        members = [nodes[node_index[str(r["path"])]] for r in records]
+        shards.append(
+            _asset_entry(
+                asset_dir,
+                SHARD_NAME.format(index=index),
+                {
+                    "objects": [r["id"] for r in records],
+                    "bbox": [r["bbox"] for r in records],
+                    "nodes": [node_index[str(r["path"])] for r in records],
+                    "local": [m.get("localMatrix") for m in members],
+                    "global": [m.get("globalMatrix") for m in members],
+                },
+            )
+        )
+    containers = [i for i, node in enumerate(nodes) if "objectId" not in node]
+    containers_entry = _asset_entry(
+        asset_dir,
+        CONTAINERS_SHARD_NAME,
+        {
+            "nodes": containers,
+            "local": [nodes[i].get("localMatrix") for i in containers],
+        },
+    )
+
+    index_entry = _asset_entry(
+        asset_dir,
+        PLACEMENTS_NAME,
+        {
+            "format": PLACEMENTS_FORMAT,
+            "schemaVersion": base.SCHEMA_VERSION,
+            "strings": list(strings),
+            "nodes": columns,
+            "objects": object_columns,
+            "solids": builder.solids_table(),
+        },
+    )
+    return {
+        **index_entry,
+        "format": PLACEMENTS_FORMAT,
         "nodes": len(nodes),
         "objects": len(builder.object_table),
+        "shards": shards,
+        "containers": containers_entry,
     }
+
+
+def placement_assets(manifest: dict) -> list[dict]:
+    """Every file the placements metadata consists of (index, shards, the
+    containers shard) as manifest-style entries; the legacy single file is one."""
+    entry = manifest["placements"]
+    return [
+        {k: entry[k] for k in ("url", "sha256", "bytes")},
+        *entry.get("shards", []),
+        *([entry["containers"]] if "containers" in entry else []),
+    ]
 
 
 def write_assets(
@@ -507,7 +626,8 @@ def write_assets(
             }
         )
 
-    placements = write_placements(builder, asset_dir)
+    chunk_index = {str(entry["key"]): i for i, entry in enumerate(chunk_entries)}
+    placements = write_placements(builder, asset_dir, chunk_index)
 
     material_colors = {
         name: list(base.color_for_material(name)) for name in builder.material_counts
@@ -634,7 +754,7 @@ def check_reusable(
             f"built with ({built_with!r}). Rebuild without --reuse-assets."
         )
     problems = []
-    for chunk in [*manifest.get("chunks", []), manifest["placements"]]:
+    for chunk in [*manifest.get("chunks", []), *placement_assets(manifest)]:
         path = chunk_path(output, chunk)
         if not path.is_file():
             problems.append(f"{chunk.get('url')}: missing")
@@ -669,7 +789,7 @@ def write_bundle(manifest: dict, output: Path, archive: Path) -> None:
     same export always produces the same archive."""
     names = [output.name] + sorted(
         unquote(str(entry["url"]))
-        for entry in [*manifest["chunks"], manifest["placements"]]
+        for entry in [*manifest["chunks"], *placement_assets(manifest)]
     )
     archive.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:

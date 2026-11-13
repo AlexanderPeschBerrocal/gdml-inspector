@@ -1,5 +1,6 @@
-"""The lazy export's placements asset and per-vertex object ids (chunk format
-v2): the foundation for hierarchy, picking and filters in lazy mode.
+"""The lazy export's placements metadata (a compact index plus per-chunk detail
+shards) and per-vertex object ids: the foundation for hierarchy, picking and
+filters in lazy mode.
 
 The guarantee that matters is cross-mode identity: for the same input and
 settings the lazy export describes every placement exactly as the single-file
@@ -32,6 +33,77 @@ IDENTITY_KEYS = [
 ]
 
 
+def _decoded(url):
+    from urllib.parse import unquote
+
+    return unquote(url)
+
+
+def read_json(output, entry):
+    return json.loads((output.parent / _decoded(entry["url"])).read_text())
+
+
+def expand_placements(output, manifest):
+    """Rebuild the full per-node and per-object records from the index and
+    shards, following only the documented layout (independent of the writer)."""
+    entry = manifest["placements"]
+    index = read_json(output, entry)
+    assert index["format"] == 2
+    strings = index["strings"]
+    n, o = index["nodes"], index["objects"]
+    nodes = []
+    for i in range(len(n["name"])):
+        parent = n["parent"][i]
+        path = (
+            n["name"][i] if parent < 0 else nodes[parent]["path"] + "/" + n["name"][i]
+        )
+        name = path.rsplit("/", 1)[-1]
+        node = {
+            "path": path,
+            "parentPath": None if parent < 0 else nodes[parent]["path"],
+            "name": name,
+            "semanticName": name if n["semName"][i] < 0 else strings[n["semName"][i]],
+            "volume": strings[n["volume"][i]],
+            "semanticVolume": strings[n["semVolume"][i]],
+            "isAssembly": bool(n["flags"][i] & 2),
+            "rendered": bool(n["flags"][i] & 1),
+        }
+        if n["object"][i] >= 0:
+            node["objectId"] = n["object"][i]
+        nodes.append(node)
+    objects = []
+    for j in range(len(o["node"])):
+        node = nodes[o["node"][j]]
+        objects.append(
+            {
+                "id": j,
+                "name": node["name"],
+                "semanticName": node["semanticName"],
+                "volume": node["volume"],
+                "semanticVolume": node["semanticVolume"],
+                "material": strings[o["material"][j]],
+                "solid": strings[o["solid"][j]],
+                "solidType": strings[o["solidType"][j]],
+                "path": node["path"],
+                "chunk": manifest["chunks"][o["chunk"][j]]["baseKey"],
+                "chunkIndex": o["chunk"][j],
+            }
+        )
+    for shard_entry in entry["shards"]:
+        shard = read_json(output, shard_entry)
+        for k, object_id in enumerate(shard["objects"]):
+            objects[object_id]["bbox"] = shard["bbox"][k]
+            node = nodes[shard["nodes"][k]]
+            if shard["local"][k] is not None:
+                node["localMatrix"] = shard["local"][k]
+            node["globalMatrix"] = shard["global"][k]
+    containers = read_json(output, entry["containers"])
+    for k, node_index in enumerate(containers["nodes"]):
+        if containers["local"][k] is not None:
+            nodes[node_index]["localMatrix"] = containers["local"][k]
+    return {"nodes": nodes, "objects": objects, "solids": index["solids"]}
+
+
 @pytest.fixture
 def lazy_export(tmp_path):
     source = tmp_path / "detector.gdml"
@@ -39,16 +111,7 @@ def lazy_export(tmp_path):
     output = tmp_path / "viewer.html"
     assert cli.main(["--lazy", str(source), *BUILD, "--out", str(output)]) == 0
     manifest = lazy.read_existing_manifest(output)
-    placements = json.loads(
-        (output.parent / _decoded(manifest["placements"]["url"])).read_text()
-    )
-    return source, output, manifest, placements
-
-
-def _decoded(url):
-    from urllib.parse import unquote
-
-    return unquote(url)
+    return source, output, manifest, expand_placements(output, manifest)
 
 
 def standalone_scene(tmp_path):
@@ -177,3 +240,134 @@ def test_the_bundle_contains_the_placements_asset_and_the_whole_export_is_reprod
         names.append(zipfile.ZipFile(archive).namelist())
     assert any(n.endswith("/placements.json") for n in names[0])
     assert (tmp_path / "one.zip").read_bytes() == (tmp_path / "two.zip").read_bytes()
+
+
+def test_every_shard_describes_exactly_the_objects_of_its_chunk(lazy_export):
+    _source, output, manifest, placements = lazy_export
+    entry = manifest["placements"]
+    assert len(entry["shards"]) == len(manifest["chunks"])
+    for index, (chunk, shard_entry) in enumerate(
+        zip(manifest["chunks"], entry["shards"], strict=True)
+    ):
+        shard = read_json(output, shard_entry)
+        in_chunk = [o["id"] for o in placements["objects"] if o["chunkIndex"] == index]
+        assert shard["objects"] == in_chunk
+        assert (
+            len(shard["bbox"])
+            == len(shard["local"])
+            == len(shard["global"])
+            == len(in_chunk)
+        )
+        assert len(shard["objects"]) == chunk["objects"]
+    containers = read_json(output, entry["containers"])
+    rendered = {n["path"] for n in placements["nodes"] if "objectId" in n}
+    assert {placements["nodes"][i]["path"] for i in containers["nodes"]}.isdisjoint(
+        rendered
+    )
+    assert len(containers["nodes"]) + manifest["objects"] == len(placements["nodes"])
+
+
+def test_the_index_is_far_smaller_than_the_single_file_form(tmp_path, repeated_boxes):
+    path = repeated_boxes(count=300)
+    output = tmp_path / "v.html"
+    assert cli.main(["--lazy", str(path), *BUILD, "--out", str(output)]) == 0
+    manifest = lazy.read_existing_manifest(output)
+    placements = expand_placements(output, manifest)
+    single_file = len(json.dumps(placements, separators=(",", ":")))
+    index = manifest["placements"]["bytes"]
+    shards = sum(s["bytes"] for s in manifest["placements"]["shards"])
+    assert index < 0.25 * single_file
+    assert index + shards < single_file  # the whole is not larger either
+
+
+def test_awkward_placement_names_round_trip_through_the_index(tmp_path, write_gdml):
+    path = write_gdml(
+        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        structure="""
+<volume name="leaf_0x1a2b"><materialref ref="G4_Si"/><solidref ref="shape"/></volume>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol name="a/b"><volumeref ref="leaf_0x1a2b"/></physvol>
+  <physvol name="Ünï_0x3c4d"><volumeref ref="leaf_0x1a2b"/>
+    <position x="10" unit="mm"/></physvol>
+</volume>""",
+    )
+    output = tmp_path / "v.html"
+    assert cli.main(["--lazy", str(path), *BUILD, "--out", str(output)]) == 0
+    manifest = lazy.read_existing_manifest(output)
+    mine = expand_placements(output, manifest)
+    reference = lazy.LazyGDMLSceneBuilder(
+        path,
+        quality="fast",
+        include_containers=False,
+        include_world=False,
+        max_objects=1000,
+        max_vertices=10**7,
+        chunk_vertices=500_000,
+    )
+    reference.build_chunks()
+    assert mine["nodes"] == reference.hierarchy_nodes()
+    by_path = {n["path"]: n for n in mine["nodes"]}
+    assert by_path["world/a/b"]["name"] == "b"  # the name is the last path segment
+    assert by_path["world/Ünï_0x3c4d"]["semanticName"] == "Ünï_"
+
+
+def test_reuse_verifies_every_shard_and_the_containers_shard(lazy_export, capsys):
+    source, output, manifest, _placements = lazy_export
+    args = ["--lazy", str(source), "--out", str(output), "--reuse-assets"]
+    entry = manifest["placements"]
+    for victim in (entry["shards"][0], entry["containers"]):
+        path = output.parent / _decoded(victim["url"])
+        original = path.read_bytes()
+        path.write_bytes(original + b" ")
+        assert cli.main(args) == 4
+        assert victim["url"].rsplit("/", 1)[-1] in capsys.readouterr().err
+        path.write_bytes(original)
+        assert cli.main(args) == 0
+    (output.parent / _decoded(entry["shards"][-1]["url"])).unlink()
+    assert cli.main(args) == 4
+    assert "missing" in capsys.readouterr().err
+
+
+def test_an_export_with_the_single_file_placements_is_still_reusable(
+    lazy_export,
+):
+    source, output, manifest, _placements = lazy_export
+    for key in ("shards", "containers", "format"):
+        del manifest["placements"][key]
+    lazy.write_html(manifest, output)
+    assert (
+        cli.main(["--lazy", str(source), "--out", str(output), "--reuse-assets"]) == 0
+    )
+
+
+def test_the_bundle_contains_every_shard(lazy_export, tmp_path):
+    source, output, manifest, _placements = lazy_export
+    archive = tmp_path / "b.zip"
+    assert (
+        cli.main(
+            [
+                "--lazy",
+                str(source),
+                "--out",
+                str(output),
+                "--reuse-assets",
+                "--bundle",
+                str(archive),
+            ]
+        )
+        == 0
+    )
+    names = set(zipfile.ZipFile(archive).namelist())
+    entry = manifest["placements"]
+    for asset in [*entry["shards"], entry["containers"]]:
+        assert _decoded(asset["url"]) in names
+
+
+def test_the_index_and_shards_never_contain_an_absolute_path(lazy_export):
+    source, output, manifest, _placements = lazy_export
+    entry = manifest["placements"]
+    for asset in [entry, *entry["shards"], entry["containers"]]:
+        assert (
+            str(source.parent)
+            not in (output.parent / _decoded(asset["url"])).read_text()
+        )

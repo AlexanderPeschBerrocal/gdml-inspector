@@ -168,6 +168,7 @@ def test_focus_centres_the_camera_on_the_placement(
     page = open_tree(watched_page, served, lazy_scene_dir)
     before = page.evaluate("dist")
     row(page, "world/hcal_b").query_selector("text=Focus").click()
+    page.wait_for_function("focusInFlight === 0")
     centre = object_center(page, "world/hcal_b")
     view = page.evaluate("viewCenter")
     assert all(abs(a - b) < 1e-6 for a, b in zip(view, centre, strict=True))
@@ -185,6 +186,7 @@ def test_focus_on_a_container_uses_its_rendered_descendants(
 ):
     page = open_tree(watched_page, served, lazy_scene_dir)
     row(page, "world/group").query_selector("text=Focus").click()
+    page.wait_for_function("focusInFlight === 0")
     assert page.evaluate("viewCenter") == object_center(page, "world/group/inner")
 
 
@@ -193,6 +195,7 @@ def test_focus_on_an_empty_container_falls_back_to_the_nearest_rendered_ancestor
 ):
     page = open_tree(watched_page, served, lazy_scene_dir)
     row(page, "world/empty").query_selector("text=Focus").click()
+    page.wait_for_function("focusInFlight === 0")
     box = page.evaluate(
         """(() => {
           const b = placements.objects.map(o => o.bbox);
@@ -212,6 +215,7 @@ def test_inspector_focus_button_focuses_the_selection(
     click_object(page, "world/hcal_b")
     assert selected(page) == "world/hcal_b"
     page.click("#detailFocus")
+    page.wait_for_function("focusInFlight === 0")
     assert page.evaluate("viewCenter") == object_center(page, "world/hcal_b")
 
 
@@ -219,6 +223,7 @@ def test_reset_view_restores_the_default_centre(watched_page, served, lazy_scene
     page = open_tree(watched_page, served, lazy_scene_dir)
     default = page.evaluate("center")
     row(page, "world/hcal_b").query_selector("text=Focus").click()
+    page.wait_for_function("focusInFlight === 0")
     assert page.evaluate("viewCenter") != default
     page.click("#resetView")
     assert page.evaluate("viewCenter") == default
@@ -231,6 +236,7 @@ def test_saved_view_round_trips_tree_expansion_selection_and_focus(
     row(page, "world/group").query_selector(".tree-toggle").click()
     row(page, "world/group/inner").click()
     row(page, "world/hcal_b").query_selector("text=Focus").click()
+    page.wait_for_function("focusInFlight === 0")
     state = page.evaluate("saveViewState()")
     assert "world/group" in state["hierarchy"]["expandedPaths"]
     assert state["hierarchy"]["selectedPath"] == "world/group/inner"
