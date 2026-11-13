@@ -54,6 +54,14 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Lazy viewer loading is bounded and recoverable: at most 6 chunk downloads at
+  once (adjustable) with a queue and progress line; switching a layer off drops
+  its queued request or aborts the one in flight and discards a late response;
+  a missing or corrupt chunk fails only its layer, with a Retry button (and
+  "Retry failed chunks") that bypasses the HTTP cache; a GPU estimate tile and
+  an optional GPU budget that evicts hidden loaded layers least recently shown
+  first. Fixes a hidden layer that finished loading after being switched off
+  staying in memory.
 - Benchmarks: `benchmarks/stress_gdml.py` (a deterministic synthetic scene
   generator with repetition, flat/nested layouts and several lazy layers) and
   `benchmarks/run_benchmarks.py` (preprocessing time, peak RSS, output bytes,

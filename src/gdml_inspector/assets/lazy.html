@@ -39,6 +39,9 @@ input[type=range] { width: 100%; }
 .layer { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
 .layer small { color: #8fa6c0; }
 .loading { color: #f4c76b; }
+.layer-status { font-size: 10px; grid-column: 2 / -1; }
+.layer-status:empty { display: none; }
+.layer-status .retry { margin-left: 6px; padding: 1px 6px; font-size: 10px; }
 .loaded { color: #74d99f; }
 .error { color: #ff8585; white-space: pre-wrap; }
 .material-list { display: grid; gap: 4px; max-height: 230px; overflow: auto; padding-right: 4px; margin: 6px 0; }
@@ -86,6 +89,7 @@ input[type=range] { width: 100%; }
     <div class="stat"><span>Total triangles</span><b id="totalTriangles"></b></div>
     <div class="stat"><span>Loaded chunks</span><b id="loadedChunks">0</b></div>
     <div class="stat"><span>Loaded binary</span><b id="loadedBytes">0 B</b></div>
+    <div class="stat"><span>GPU buffers (est.)</span><b id="loadedGpu">0 B</b></div>
   </div>
   <div class="row">
     <button id="loadAll">Load all</button>
@@ -95,6 +99,16 @@ input[type=range] { width: 100%; }
   <div class="row">
     <label><input id="releaseHidden" type="checkbox" checked> Unload hidden layers</label>
   </div>
+  <div class="row">
+    <label title="Hidden but loaded layers are evicted, least recently shown first, to stay under this (0 = no limit)">GPU budget (MiB)</label>
+    <input id="gpuBudget" type="number" min="0" step="any" value="0" style="width:70px">
+  </div>
+  <div class="row">
+    <label title="How many chunks download at once; the rest wait in a queue">Parallel downloads</label>
+    <input id="maxFetches" type="number" min="1" max="32" value="6" style="width:70px">
+  </div>
+  <div id="loadProgress" class="muted loading" style="display:none"></div>
+  <div class="row"><button id="retryFailed" type="button" style="display:none">Retry failed chunks</button></div>
 
   <h2>View</h2>
   <div class="camera-actions">
@@ -216,10 +230,17 @@ function formatBytes(n) {
   return `${v.toFixed(i ? 1 : 0)} ${units[i]}`;
 }
 
-const states = Object.fromEntries(MANIFEST.chunks.map(c => [c.key, { loaded:false, loading:false, visible:false, error:'', buffers:null, bytes:0 }]));
+const states = Object.fromEntries(MANIFEST.chunks.map(c => [c.key, {
+  loaded:false, loading:false, visible:false, error:'', buffers:null, bytes:0,
+  // Request bookkeeping: `token` is bumped whenever a request is cancelled so a
+  // late response from it is discarded; `promise` is shared by callers that ask
+  // for a chunk already queued or in flight; `lastUsed` orders eviction.
+  token:0, promise:null, controller:null, entry:null, retry:false, lastUsed:0,
+}]));
 let selectedObjectId = null, selectedPath = null;
 const selectedLayers = new Set();
 const layerChecks = new Map();
+const layerStatus = new Map();
 const grouped = {};
 for (const chunk of MANIFEST.chunks) {
   grouped[chunk.subsystem] ??= {};
@@ -244,7 +265,8 @@ function buildTree() {
       const text=document.createElement('span'); text.textContent=layer;
       const count=document.createElement('small');
       count.textContent=`${chunks.reduce((s,c)=>s+c.triangles,0).toLocaleString()} △`;
-      label.append(check,text,count); layerBox.append(label);
+      const status=document.createElement('span'); status.className='layer-status'; layerStatus.set(key,status);
+      label.append(check,text,count,status); layerBox.append(label);
       check.addEventListener('change', () => setLayer(key, check.checked));
     }
     let changeSequence=0;
@@ -268,27 +290,87 @@ async function setLayer(baseKey, enabled) {
   const chunks=MANIFEST.chunks.filter(c => c.baseKey===baseKey);
   if (enabled) {
     await Promise.all(chunks.map(loadChunk));
+    // Decide from the state *now*: the layer may have been switched off (or
+    // on again) while the chunks were queued or downloading.
     const stillEnabled=selectedLayers.has(baseKey);
-    for (const chunk of chunks) if (states[chunk.key].loaded) states[chunk.key].visible=stillEnabled;
+    for (const chunk of chunks) {
+      const state=states[chunk.key];
+      if (!state.loaded) continue;
+      state.visible=stillEnabled;
+      if (stillEnabled) state.lastUsed=++useClock;
+    }
   } else {
     for (const chunk of chunks) {
-      states[chunk.key].visible=false;
+      const state=states[chunk.key];
+      state.visible=false;
+      // Stop a queued or in-flight request: nothing it returns may be kept.
+      cancelChunk(chunk);
       if (document.getElementById('releaseHidden').checked) unloadChunk(chunk);
     }
   }
+  enforceBudget();
   syncSubsystemChecks(); updateStats(); requestRender();
 }
 
-async function loadChunk(chunk) {
+// --- Request scheduling ---
+// At most maxFetches chunk requests are in flight; the rest wait in a FIFO
+// queue. A request can be cancelled (queued: dropped; in flight: aborted).
+let maxFetches=6, activeFetches=0, useClock=0;
+const fetchQueue=[];
+function schedule(task) {
+  return new Promise(resolve => { fetchQueue.push({task, resolve, cancelled:false}); pumpQueue(); });
+}
+function pumpQueue() {
+  while (activeFetches<maxFetches && fetchQueue.length) {
+    const entry=fetchQueue.shift();
+    if (entry.cancelled) { entry.resolve(); continue; }
+    entry.started=true; activeFetches++;
+    entry.task().finally(() => { activeFetches--; entry.resolve(); updateProgress(); pumpQueue(); });
+  }
+  updateProgress();
+}
+
+function loadChunk(chunk) {
   const state=states[chunk.key];
-  if (state.loaded || state.loading) return;
-  state.loading=true; state.error=''; updateStatus(`Loading ${chunk.subsystem} / ${chunk.layer}…`, 'loading');
+  if (state.loaded) return Promise.resolve();
+  if (state.promise) return state.promise; // already queued or downloading
+  state.error=''; state.loading=true;
+  const token=++state.token;
+  const forceReload=state.retry; state.retry=false;
+  const entryHolder={};
+  state.promise=new Promise(resolve => {
+    entryHolder.entry={task:() => fetchChunk(chunk, token, forceReload), resolve, cancelled:false};
+    fetchQueue.push(entryHolder.entry); pumpQueue();
+  });
+  state.entry=entryHolder.entry;
+  updateLayerStatus(chunk.baseKey); updateProgress();
+  return state.promise;
+}
+
+function cancelChunk(chunk) {
+  const state=states[chunk.key];
+  if (!state.loading) return;
+  state.token++; // a response that arrives later belongs to a dead request
+  if (state.entry) state.entry.cancelled=true;
+  if (state.controller) state.controller.abort();
+  state.loading=false; state.promise=null; state.controller=null; state.entry=null;
+  updateLayerStatus(chunk.baseKey); updateProgress();
+}
+
+async function fetchChunk(chunk, token, forceReload) {
+  const state=states[chunk.key];
+  const controller=new AbortController();
+  state.controller=controller;
+  updateStatus(`Loading ${chunk.subsystem} / ${chunk.layer}…`, 'loading');
   try {
-    const response=await fetch(chunk.url);
+    // A retry bypasses the HTTP cache so a bad response is not served again.
+    const response=await fetch(chunk.url, {signal:controller.signal, cache:forceReload ? 'reload' : 'default'});
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     const data=await response.arrayBuffer();
+    if (token!==state.token) return; // cancelled while downloading
     if (chunk.sha256) {
       const actual=await sha256Hex(data);
+      if (token!==state.token) return;
       if (actual!==null && actual!==chunk.sha256) {
         const mismatch=new Error(`Chunk ${chunk.url} fails its recorded sha256 (expected ${chunk.sha256.slice(0,12)}…, got ${actual.slice(0,12)}…): it is corrupt or was edited after export.`);
         mismatch.digest=true;
@@ -319,14 +401,20 @@ async function loadChunk(chunk) {
     };
     uploadVisibility(state.buffers);
     state.loaded=true; state.visible=selectedLayers.has(chunk.baseKey); state.bytes=data.byteLength;
-    updateStatus(`Loaded ${chunk.subsystem} / ${chunk.layer}.`, 'loaded');
+    state.lastUsed=++useClock;
+    // The layer was switched off while this was in flight and nothing cancelled
+    // it in time: honour "unload hidden" now rather than keep the buffers.
+    if (!state.visible && document.getElementById('releaseHidden').checked) unloadChunk(chunk);
+    else updateStatus(`Loaded ${chunk.subsystem} / ${chunk.layer}.`, 'loaded');
     refreshInspector();
   } catch (error) {
+    if (token!==state.token || (error && error.name==='AbortError')) return; // cancelled, not a failure
     state.error=String(error);
     const hint=error && error.digest ? '' : '\nUse --serve or another HTTP server; file:// cannot fetch lazy chunks.';
     updateStatus(`Could not load ${chunk.url}.\n${error}${hint}`, 'error');
   } finally {
-    state.loading=false; updateStats(); requestRender();
+    if (token===state.token) { state.loading=false; state.promise=null; state.controller=null; state.entry=null; }
+    updateLayerStatus(chunk.baseKey); updateStats(); requestRender();
   }
 }
 
@@ -339,12 +427,76 @@ function unloadChunk(chunk) {
   state.loaded=false; state.buffers=null; state.bytes=0;
   refreshInspector();
 }
+
+// --- Failures, retry, progress and memory accounting ---
+function layerChunks(baseKey) { return MANIFEST.chunks.filter(c => c.baseKey===baseKey); }
+function updateLayerStatus(baseKey) {
+  const box=layerStatus.get(baseKey);
+  if (!box) return;
+  const chunks=layerChunks(baseKey);
+  const failed=chunks.filter(c => states[c.key].error);
+  const busy=chunks.filter(c => states[c.key].loading).length;
+  box.textContent='';
+  box.className='layer-status';
+  if (failed.length) {
+    box.classList.add('error');
+    const message=document.createElement('span');
+    message.textContent=`failed (${failed.length})`;
+    message.title=failed.map(c => `${c.url}: ${states[c.key].error}`).join('\n');
+    const retry=document.createElement('button');
+    retry.type='button'; retry.className='retry'; retry.textContent='Retry';
+    retry.addEventListener('click', e => { e.preventDefault(); retryLayer(baseKey); });
+    box.append(message, retry);
+  } else if (busy) {
+    box.classList.add('loading');
+    box.textContent=`loading ${busy}…`;
+  }
+}
+function retryLayer(baseKey) {
+  for (const chunk of layerChunks(baseKey)) if (states[chunk.key].error) states[chunk.key].retry=true;
+  return setLayer(baseKey, true);
+}
+function updateProgress() {
+  const all=Object.values(states);
+  const inFlight=all.filter(s => s.loading && s.controller).length;
+  const queued=all.filter(s => s.loading && !s.controller).length;
+  const failed=all.filter(s => s.error).length;
+  const box=document.getElementById('loadProgress');
+  const parts=[];
+  if (inFlight || queued) parts.push(`Loading: ${inFlight} downloading, ${queued} queued`);
+  if (failed) parts.push(`${failed} failed`);
+  box.textContent=parts.join(' · ');
+  box.style.display=parts.length ? '' : 'none';
+  document.getElementById('retryFailed').style.display=failed ? '' : 'none';
+}
+const GPU_BYTES_PER_VERTEX=12+4+4+1; // position, colour, object id, visibility
+function gpuBytes() {
+  return Object.values(states).reduce((n,s) => n+(s.buffers ? s.buffers.count*GPU_BYTES_PER_VERTEX : 0), 0);
+}
+// Keeps loaded geometry under the GPU budget (MiB, 0 = unlimited) by evicting
+// hidden-but-loaded chunks, least recently shown first. Visible chunks are
+// never evicted: if they alone exceed the budget the status says so.
+function enforceBudget() {
+  const budget=(+document.getElementById('gpuBudget').value||0)*1024*1024;
+  if (!budget) return;
+  const hidden=MANIFEST.chunks.filter(c => states[c.key].loaded && !states[c.key].visible)
+    .sort((a,b) => states[a.key].lastUsed-states[b.key].lastUsed);
+  for (const chunk of hidden) {
+    if (gpuBytes()<=budget) break;
+    unloadChunk(chunk);
+  }
+  if (gpuBytes()>budget) {
+    updateStatus(`Visible layers use ${formatBytes(gpuBytes())} of GPU buffers, over the ${formatBytes(budget)} budget; hide a layer to free memory.`, 'error');
+  }
+}
 function updateStatus(text, cls='') { const el=document.getElementById('status'); el.textContent=text; el.className=`muted ${cls}`; }
 function updateStats() {
   if (typeof updateFilterCounts === 'function') updateFilterCounts();
   const loaded=Object.values(states).filter(s=>s.loaded);
   document.getElementById('loadedChunks').textContent=`${loaded.length}/${MANIFEST.chunks.length}`;
   document.getElementById('loadedBytes').textContent=formatBytes(loaded.reduce((s,x)=>s+x.bytes,0));
+  document.getElementById('loadedGpu').textContent=formatBytes(gpuBytes());
+  updateProgress();
 }
 function syncSubsystemChecks() {
   document.querySelectorAll('input[data-subsystem]').forEach(sub => {
@@ -764,6 +916,12 @@ canvas.addEventListener('click', e => {
 // Shared clipping state (see assets/clipping.js).
 let clipData=null;
 buildClipPanel(document.getElementById('clipPanel'),{bbox:MANIFEST.bbox,onChange:data=>{clipData=data;requestRender();}});
+document.getElementById('maxFetches').addEventListener('change', e => { maxFetches=Math.max(1, Math.min(32, +e.target.value||6)); pumpQueue(); });
+document.getElementById('gpuBudget').addEventListener('change', () => { enforceBudget(); updateStats(); requestRender(); });
+document.getElementById('retryFailed').onclick = () => {
+  const keys=new Set(MANIFEST.chunks.filter(c => states[c.key].error).map(c => c.baseKey));
+  for (const key of keys) retryLayer(key);
+};
 buildTree(); updateStats(); requestRender();
 
 // --- Saved view state (see assets/viewstate.js) ---

@@ -14,7 +14,7 @@ LAYER = {
     "world/hcal_b": "HCAL\x1fBarrel layer 1",
     "world/front": "Other\x1ffront_box",
     "world/back": "Other\x1fback_box",
-    "world/group/inner": "Other\x1fchild",
+    "world/group/inner": "Tracker\x1fBarrel r≈30 mm",  # "inner" is a tracker token
 }
 
 
