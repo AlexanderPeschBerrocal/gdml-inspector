@@ -54,6 +54,14 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Lazy export memory: chunk parts that are full are written to disk while the
+  scene is still being built and their arrays released, so memory holds only the
+  parts still being filled; the output is byte-for-byte unchanged. New
+  `--memory-budget MIB` (default 512) also releases the largest open parts early
+  for scenes of many small layers (it changes where parts split, so it is
+  recorded in the provenance). Measured at 100,000 placements: peak export RSS
+  679 to 482 MiB (one layer) and 708 to 555 MiB (many layers, budget 64).
+  Per-placement metadata is not bounded by this.
 - Placements metadata is split into a compact columnar index plus per-chunk
   detail shards (bounding boxes and transforms). The tree, filters and picking
   use the index only; the inspector and Focus fetch just the shard of the chunk

@@ -43,7 +43,9 @@ uv run --no-sync pytest tests/test_*browser*.py \
 - **What is covered:** both programs' shaders link with no GL error; the
   camera presets, opacity, wireframe, axes, dark-mode, clipping, material and
   hierarchy/picking/diagnostics controls (standalone); lazy picking
-  (`test_lazy_shards_browser.py` proves the tree and filters never fetch a shard, a
+  (`test_spill.py` checks spilled output is byte-identical to the in-memory export,
+  that only open parts hold arrays, the budget's bound, reuse and cleanup;
+  `test_lazy_shards_browser.py` proves the tree and filters never fetch a shard, a
   pick fetches only its chunk's shard, "loading…" until it arrives, focus
   scope, corrupt-shard recovery and the single-file fallback;
   `test_instancing.py` decodes v3 chunks independently and compares them with the

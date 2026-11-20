@@ -14,7 +14,7 @@ python benchmarks/run_benchmarks.py --sizes small medium nested large
 python benchmarks/run_benchmarks.py --gdml detector.gdml --browser --backend pyg4ometry
 
 # Just generate a scene to export by hand
-python benchmarks/stress_gdml.py stress.gdml --placements 20000 --logical 100
+python benchmarks/stress_gdml.py stress.gdml --placements 20000 --logical 100 [--single-layer]
 ```
 
 `stress_gdml.py` writes a deterministic GDML file: `--placements` objects
@@ -103,6 +103,22 @@ The single `placements.json` became a compact index plus per-chunk detail shards
 
 The whole output is smaller too (COCOA, Python backend, instancing on: 9.7 to
 5.3 MiB) because the index no longer repeats fields per node and per object.
+
+### Effect of writing finished parts early (export memory)
+
+Lazy exports of 100,000 placements, `--instancing off`, `--quality fast`, peak RSS
+of the export process (single runs, same machine):
+
+| scene | before | after | notes |
+| --- | ---: | ---: | --- |
+| one layer (`large-one-layer`) | 679 MiB | 482 MiB | parts spill as they fill; time 23.9 s to 23.3 s |
+| many small layers (`large`) | 708 MiB | 555 MiB | needs `--memory-budget 64`; the default 512 MiB is not reached |
+
+Spilling bounds the chunk *geometry*; the rest (about 2.5 KB of Python
+hierarchy and object records per placement, plus the parsed GDML tree, roughly
+400 MiB of the 482) is untouched and is now what grows with the scene. A profile at
+20,000 placements: chunk arrays 42 MiB, object table 19 MiB, hierarchy 30 MiB.
+Compacting those records is the next memory lever.
 
 ### What the baseline shows
 

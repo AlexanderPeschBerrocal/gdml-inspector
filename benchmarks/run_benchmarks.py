@@ -36,20 +36,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stress_gdml  # noqa: E402
 
 # name -> (placements, logical volumes, layout)
-SYNTHETIC = {
+# (placements, logical volumes, layout[, one lazy layer])
+SYNTHETIC: dict[str, tuple] = {
     "small": (2_000, 40, "flat"),
     "medium": (20_000, 100, "flat"),
     "large": (100_000, 200, "flat"),
     "nested": (20_000, 100, "nested"),
+    "large-one-layer": (100_000, 200, "flat", True),
 }
 
 
 def _without_instancing(extra: list[str]) -> list[str]:
+    """Drop the lazy-only options (each takes one value)."""
     result, skip = [], False
     for item in extra:
         if skip:
             skip = False
-        elif item == "--instancing":
+        elif item in ("--instancing", "--memory-budget"):
             skip = True
         else:
             result.append(item)
@@ -275,6 +278,13 @@ def main(argv: list[str] | None = None) -> int:
         help="lazy exports: store repeated shapes once per chunk (see --help of --lazy)",
     )
     parser.add_argument(
+        "--memory-budget",
+        type=int,
+        default=None,
+        metavar="MIB",
+        help="lazy exports: pass --memory-budget (default: the exporter's own)",
+    )
+    parser.add_argument(
         "--repeat",
         type=int,
         default=1,
@@ -303,10 +313,13 @@ def main(argv: list[str] | None = None) -> int:
         source_dir.mkdir(parents=True, exist_ok=True)
         cases: list[tuple[str, Path]] = []
         for size in args.sizes:
-            placements, logical, layout = SYNTHETIC[size]
+            placements, logical, layout, *rest = SYNTHETIC[size]
             path = source_dir / f"stress-{size}.gdml"
             path.write_text(
-                stress_gdml.build(placements, logical, layout, 50), encoding="utf-8"
+                stress_gdml.build(
+                    placements, logical, layout, 50, bool(rest and rest[0])
+                ),
+                encoding="utf-8",
             )
             cases.append(
                 (
@@ -320,6 +333,11 @@ def main(argv: list[str] | None = None) -> int:
             extra = [
                 "--instancing",
                 args.instancing,
+                *(
+                    ["--memory-budget", str(args.memory_budget)]
+                    if args.memory_budget is not None
+                    else []
+                ),
                 "--backend",
                 args.backend,
                 "--quality",

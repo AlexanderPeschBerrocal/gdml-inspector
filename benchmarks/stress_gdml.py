@@ -48,14 +48,21 @@ def solid_xml(index: int) -> tuple[str, str]:
     )
 
 
-def build(placements: int, logical: int, layout: str, group_size: int) -> str:
+def build(
+    placements: int,
+    logical: int,
+    layout: str,
+    group_size: int,
+    single_layer: bool = False,
+) -> str:
     if placements < 1 or logical < 1 or group_size < 1:
         raise ValueError("placements, logical and group-size must be at least 1")
+    families = FAMILIES[:1] if single_layer else FAMILIES
     solids, volumes = [], []
     for index in range(logical):
         name, xml = solid_xml(index)
         solids.append(xml)
-        family = FAMILIES[index % len(FAMILIES)]
+        family = families[index % len(families)]
         volumes.append(
             f'<volume name="{family}_vol_{index}"><materialref ref="Mat_{index % 5}"/>'
             f'<solidref ref="{name}"/></volume>'
@@ -70,7 +77,7 @@ def build(placements: int, logical: int, layout: str, group_size: int) -> str:
     physvols = []
     if layout == "flat":
         for i in range(placements):
-            ref = f"{FAMILIES[(i % logical) % len(FAMILIES)]}_vol_{i % logical}"
+            ref = f"{families[(i % logical) % len(families)]}_vol_{i % logical}"
             physvols.append(
                 f'<physvol name="p{i}"><volumeref ref="{ref}"/>{position(i)}</physvol>'
             )
@@ -83,7 +90,7 @@ def build(placements: int, logical: int, layout: str, group_size: int) -> str:
             members = []
             for k in range(min(group_size, placements - g * group_size)):
                 i = g * group_size + k
-                ref = f"{FAMILIES[(i % logical) % len(FAMILIES)]}_vol_{i % logical}"
+                ref = f"{families[(i % logical) % len(families)]}_vol_{i % logical}"
                 members.append(
                     f'<physvol name="p{i}"><volumeref ref="{ref}"/>'
                     f'<position x="{(k % 10) * 4.0}" y="{(k // 10) * 4.0}" z="0" unit="mm"/></physvol>'
@@ -141,11 +148,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--layout", choices=("flat", "nested"), default="flat")
     parser.add_argument(
+        "--single-layer",
+        action="store_true",
+        help="name every volume so the lazy exporter puts all objects in one layer",
+    )
+    parser.add_argument(
         "--group-size", type=int, default=50, help="children per container when nested"
     )
     args = parser.parse_args(argv)
     try:
-        text = build(args.placements, args.logical, args.layout, args.group_size)
+        text = build(
+            args.placements,
+            args.logical,
+            args.layout,
+            args.group_size,
+            args.single_layer,
+        )
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

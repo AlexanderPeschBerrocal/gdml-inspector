@@ -39,8 +39,10 @@ specialise only `add_volume()`/`to_dict()`, to additionally record each
 object's placement matrix and a solids-by-ref parameter table; they inherit
 the shared walk unchanged. Lazy chunks come in two layouts: baked (format v1/v2, world-space triangles)
 and instanced (format v3: distinct meshes plus per-placement matrices and ids).
-`write_chunk()` picks one per chunk from the `--instancing` mode; the builder
-keeps both descriptions of each chunk until then.
+`encode_chunk()` picks one per chunk from the `--instancing` mode; the builder
+keeps both descriptions of each chunk until the part is closed (full, or released
+early by `--memory-budget`), when its bytes are written to a spill directory and
+its arrays freed.
 
 The hierarchy tree (`tree.js`), picker (`picking.js`) and inspector
 (`inspector.js`) are shared browser assets injected into both viewers.
