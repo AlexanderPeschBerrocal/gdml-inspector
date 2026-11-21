@@ -68,11 +68,11 @@ function validateViewState(raw, bbox) {
   }
   if (doc.projection !== undefined) {
     const p = doc.projection;
-    if (!p || p.type !== 'perspective' || !viewIsNumber(p.fovDeg)) {
-      errors.push('"projection" must be {"type": "perspective", "fovDeg": number}; no other projection exists.');
+    if (!p || (p.type !== 'perspective' && p.type !== 'orthographic') || !viewIsNumber(p.fovDeg)) {
+      errors.push('"projection" must be {"type": "perspective" or "orthographic", "fovDeg": number}.');
     } else {
       if (p.fovDeg !== 45) warnings.push(`Projection field of view ${p.fovDeg} degrees differs from the viewer's fixed 45; the viewer keeps 45.`);
-      state.projection = {type: 'perspective', fovDeg: p.fovDeg};
+      state.projection = {type: p.type, fovDeg: p.fovDeg};
     }
   }
   if (doc.display !== undefined) {

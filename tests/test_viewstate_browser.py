@@ -209,9 +209,9 @@ def test_stale_and_unknown_entries_are_reported_by_name(
                 "format": "gdml-inspector-view",
                 "version": 1,
                 "viewer": "standalone",
-                "projection": {"type": "orthographic", "fovDeg": 0},
+                "projection": {"type": "stereographic", "fovDeg": 45},
             },
-            "no other projection",
+            '"projection" must be',
         ),
         (
             "bad display",

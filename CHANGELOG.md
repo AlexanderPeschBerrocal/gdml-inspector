@@ -54,6 +54,11 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Both viewers: a perspective/orthographic projection switch (saved in view-state
+  files), a length scale bar, *Fit all* and *Fit selection* buttons, and wheel zoom
+  limits in the lazy viewer. The camera maths moved into a shared `camera.js`
+  (the lazy viewer used to have its own copy). Axis views keep their orientation
+  across projections, and picking, clipping and highlight work in both.
 - Lazy viewer: a wireframe overlay and a light/dark theme (dark by default, as
   before), matching the standalone viewer's controls and saved in view-state
   files, so a standalone view no longer reports them as ignored. The overlay is
