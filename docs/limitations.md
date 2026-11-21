@@ -403,9 +403,37 @@ hidden".
   orientation, centre and distance whatever pan or zoom came before; wheel zoom is
   limited to 0.01 to 50 times the scene radius in both viewers. In the lazy viewer
   fit-all after narrowing fetches the bounding-box shards it needs.
-- Not done yet (issue #6): screenshot export, per-selection opacity or colours,
-  a documented transparency-ordering technique (the standalone viewer draws with
-  blending and no depth test), configurable background and a way to tell real
+- **Screenshot export** (both viewers, `screenshot.js`): *Save PNG* renders the
+  current view again at an explicit size (default 1920 x 1080; each side at most
+  8192 px or the GPU's limit, whichever is smaller, stated in the panel) with the
+  viewer's own draw path, so hiding, clipping, filters, wireframe, instancing,
+  projection and the selection highlight are exactly as shown. The page's panels
+  and buttons are never in the image. The framing follows the *output's* aspect
+  ratio (the vertical field of view is fixed), so a size with another aspect ratio
+  than the window shows more or less to the sides; at the canvas's own size and
+  theme background the PNG equals the screen pixel for pixel (tested).
+  - Options: background (current theme, white, black, or transparent), scale bar,
+    axes (lines and X/Y/Z labels), caption and a material legend. Annotations are
+    drawn as text on a 2D canvas, so they are sharp at any size.
+  - The caption lists the source *file name* (never a path), the units (mm), the
+    projection, how many placements (standalone) or chunks (lazy) are shown, the
+    first 12 characters of the input's sha256, and the tool name and version. The
+    legend lists only the materials of what is shown (the lazy viewer needs the
+    placement metadata for that and fetches it; up to 14 entries, then "+ N more").
+  - **Transparent background** is recovered exactly, not keyed: the view is rendered
+    on black and on white and alpha is `1 - (white - black)`, colour `black / alpha`
+    (source-over blending is linear in the background). It costs two renders and
+    is slower at large sizes; it assumes the picture is a plain blend, which holds
+    for both viewers' drawing.
+  - The lazy viewer captures what is loaded and visible, and the caption says how
+    much that is. The drawing buffer is borrowed for the render and restored
+    afterwards; the page layout never follows it (the canvas is positioned to fill
+    its container, which also fixed the canvas's CSS height following a buffer of
+    another aspect ratio). Memory use grows with the output size (8192 x 8192 needs
+    well over 250 MB of drawing buffer).
+- Not done yet (issue #6): per-selection opacity or colours, a documented
+  transparency-ordering technique (the standalone viewer draws with blending and
+  no depth test), a configurable on-screen background, and a way to tell real
   solid edges from triangle diagonals.
 
 ## Rendering and size limits

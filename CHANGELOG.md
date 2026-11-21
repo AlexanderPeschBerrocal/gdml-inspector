@@ -54,6 +54,12 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Both viewers: a Screenshot panel that saves a PNG at an explicit pixel size
+  (up to 8192 per side or the GPU limit) without the page's panels, with a choice
+  of theme, white, black or exactly-recovered transparent background, and optional
+  scale bar, axes, caption (source name, units, projection, input sha256, tool
+  version) and a legend of the materials currently shown. The canvas is now
+  positioned to fill its container so its CSS size never follows its drawing buffer.
 - Both viewers: a perspective/orthographic projection switch (saved in view-state
   files), a length scale bar, *Fit all* and *Fit selection* buttons, and wheel zoom
   limits in the lazy viewer. The camera maths moved into a shared `camera.js`

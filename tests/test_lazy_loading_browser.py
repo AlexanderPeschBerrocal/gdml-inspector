@@ -83,7 +83,7 @@ def test_downloads_are_bounded_and_the_rest_queue(watched_page, served, lazy_sce
     page.wait_for_function("Object.values(states).filter(s => s.loaded).length === 1")
     page.wait_for_function("activeFetches === 2")
     assert len(held.requested) == 3
-    while held.pending or page.evaluate("fetchQueue.length"):
+    while held.pending or page.evaluate("fetchQueue.length + activeFetches"):
         held.release()
         next_frames(page)
     page.wait_for_function("Object.values(states).every(s => s.loaded)")
@@ -122,7 +122,7 @@ def test_switching_a_queued_layer_off_never_requests_it(
     assert len(queued) == len(KEYS) - 1
     victim = queued[-1]
     page.evaluate(f"setLayer({json.dumps(victim)}, false)")
-    while held.pending or page.evaluate("fetchQueue.length"):
+    while held.pending or page.evaluate("fetchQueue.length + activeFetches"):
         held.release()
         next_frames(page)
     wait_idle(page)
