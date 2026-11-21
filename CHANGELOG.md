@@ -54,6 +54,12 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Lazy viewer: a wireframe overlay and a light/dark theme (dark by default, as
+  before), matching the standalone viewer's controls and saved in view-state
+  files, so a standalone view no longer reports them as ignored. The overlay is
+  drawn in the fill shader from barycentric coordinates, so hiding, clipping,
+  instancing and highlight apply to it. The lazy page's colours are now theme
+  variables.
 - Configurable grouping for lazy exports: `--grouping cocoa|hierarchy|material|spatial|none`
   (default `cocoa`, unchanged), `--group-depth`, `--grid-cell` and
   `--grouping-rules FILE.json` (ordered rules matching path, name, volume, material

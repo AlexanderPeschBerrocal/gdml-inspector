@@ -5,20 +5,34 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GDML Inspector — Lazy — __TITLE__</title>
 <style>
-:root { color-scheme: light dark; font-family: Inter, system-ui, sans-serif; }
+:root { font-family: Inter, system-ui, sans-serif; }
 * { box-sizing: border-box; }
 html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
-body { display: grid; grid-template-columns: 360px 1fr; background: #07111f; color: #e6edf7; }
-aside { overflow: auto; padding: 14px; background: #0e1b2b; border-right: 1px solid #2b3b50; }
+body {
+  --bg: #07111f; --text: #e6edf7; --panel: #0e1b2b; --border: #2b3b50; --border2: #2c4059;
+  --muted: #8fa6c0; --accent: #9fc5ff; --soft: #13243a; --btn: #172c46; --btn-hover: #213c5e;
+  --btn-border: #3b526e; --btn-text: #e9f2ff; --head: #152942; --hud: #091626dd; --hud-border: #314761;
+  --warn-bg: #3a2a10; --warn-border: #8a5a16; --st-loading: #f4c76b; --st-loaded: #74d99f;
+  --st-error: #ff8585; --st-warn: #f4a63b; color-scheme: dark;
+  display: grid; grid-template-columns: 360px 1fr; background: var(--bg); color: var(--text);
+}
+body.light {
+  --bg: #f4f6fa; --text: #1d2430; --panel: #ffffff; --border: #d9dde7; --border2: #d0d6e2;
+  --muted: #475569; --accent: #1d4ed8; --soft: #eef2f8; --btn: #f1f5f9; --btn-hover: #e2e8f0;
+  --btn-border: #b6c0d0; --btn-text: #1d2430; --head: #eaf0fa; --hud: #ffffffe0; --hud-border: #c5cedd;
+  --warn-bg: #fff7ed; --warn-border: #fed7aa; --st-loading: #a16207; --st-loaded: #15803d;
+  --st-error: #b91c1c; --st-warn: #b45309; color-scheme: light;
+}
+aside { overflow: auto; padding: 14px; background: var(--panel); border-right: 1px solid var(--border); }
 main { position: relative; min-width: 0; }
 canvas { display: block; width: 100%; height: 100%; cursor: grab; }
 canvas:active { cursor: grabbing; }
 h1 { font-size: 17px; margin: 0 0 4px; }
-h2 { font-size: 13px; margin: 16px 0 7px; color: #9fc5ff; text-transform: uppercase; letter-spacing: .05em; }
-.muted { color: #9cafc6; font-size: 12px; line-height: 1.4; }
+h2 { font-size: 13px; margin: 16px 0 7px; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
+.muted { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
-.stat { background: #13243a; border-radius: 7px; padding: 7px 9px; }
-.stat span { display: block; color: #8fa6c0; font-size: 10px; }
+.stat { background: var(--soft); border-radius: 7px; padding: 7px 9px; }
+.stat span { display: block; color: var(--muted); font-size: 10px; }
 .stat b { font-size: 13px; }
 .row { display: flex; gap: 7px; align-items: center; margin: 6px 0; }
 .row label { flex: 1; font-size: 12px; }
@@ -28,55 +42,55 @@ h2 { font-size: 13px; margin: 16px 0 7px; color: #9fc5ff; text-transform: upperc
 .axis-x { color: #ef4444; }
 .axis-y { color: #22c55e; }
 .axis-z { color: #3b82f6; }
-.axis-label { position: absolute; display: none; pointer-events: none; font-size: 13px; font-weight: 800; transform: translate(-50%, -50%); text-shadow: 0 0 3px #07111f, 0 0 3px #07111f; }
+.axis-label { position: absolute; display: none; pointer-events: none; font-size: 13px; font-weight: 800; transform: translate(-50%, -50%); text-shadow: 0 0 3px var(--bg), 0 0 3px var(--bg); }
 button, select, input { accent-color: #65a5ff; }
-button { border: 1px solid #3b526e; color: #e9f2ff; background: #172c46; border-radius: 6px; padding: 6px 9px; cursor: pointer; }
-button:hover { background: #213c5e; }
+button { border: 1px solid var(--btn-border); color: var(--btn-text); background: var(--btn); border-radius: 6px; padding: 6px 9px; cursor: pointer; }
+button:hover { background: var(--btn-hover); }
 input[type=range] { width: 100%; }
-.subsystem { margin: 7px 0; border: 1px solid #2c4059; border-radius: 7px; overflow: hidden; }
-.subsystem-head { display: flex; align-items: center; gap: 7px; padding: 7px 8px; background: #152942; font-weight: 650; font-size: 13px; }
+.subsystem { margin: 7px 0; border: 1px solid var(--border2); border-radius: 7px; overflow: hidden; }
+.subsystem-head { display: flex; align-items: center; gap: 7px; padding: 7px 8px; background: var(--head); font-weight: 650; font-size: 13px; }
 .layers { padding: 4px 8px 7px 24px; }
 .layer { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
-.layer small { color: #8fa6c0; }
-.loading { color: #f4c76b; }
+.layer small { color: var(--muted); }
+.loading { color: var(--st-loading); }
 .layer-status { font-size: 10px; grid-column: 2 / -1; }
 .layer-status:empty { display: none; }
 .layer-status .retry { margin-left: 6px; padding: 1px 6px; font-size: 10px; }
-.loaded { color: #74d99f; }
-.error { color: #ff8585; white-space: pre-wrap; }
+.loaded { color: var(--st-loaded); }
+.error { color: var(--st-error); white-space: pre-wrap; }
 .material-list { display: grid; gap: 4px; max-height: 230px; overflow: auto; padding-right: 4px; margin: 6px 0; }
 .material-item { display: grid; grid-template-columns: auto 14px 1fr auto; gap: 7px; align-items: center; font-size: 11px; }
 #filterPanel input:not([type=checkbox]), #filterPanel select { width: 100%; margin: 3px 0; }
 #filterSummary, #filterCounts { margin: 4px 0; }
 .swatch { width: 11px; height: 11px; border-radius: 2px; }
-#overlay { position: absolute; right: 12px; top: 12px; background: #091626dd; border: 1px solid #314761; border-radius: 8px; padding: 8px 10px; font-size: 11px; pointer-events: none; }
+#overlay { position: absolute; right: 12px; top: 12px; background: var(--hud); border: 1px solid var(--hud-border); border-radius: 8px; padding: 8px 10px; font-size: 11px; pointer-events: none; }
 #warnings { max-height: 160px; overflow: auto; }
-#compat { background: #3a2a10; border: 1px solid #8a5a16; border-radius: 6px; padding: 8px; margin: 8px 0; font-size: 12px; line-height: 1.4; }
-.diagnostic-row { margin: 4px 0; padding-bottom: 4px; border-bottom: 1px solid #2c4059; }
+#compat { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 6px; padding: 8px; margin: 8px 0; font-size: 12px; line-height: 1.4; }
+.diagnostic-row { margin: 4px 0; padding-bottom: 4px; border-bottom: 1px solid var(--border2); }
 .diagnostic-row:last-child { border-bottom: none; }
-.diagnostic-count { color: #8fa6c0; }
+.diagnostic-count { color: var(--muted); }
 .inspector-field { display: grid; grid-template-columns: 110px 1fr; gap: 6px; margin: 2px 0; word-break: break-word; font-size: 12px; }
-.inspector-field span { color: #8fa6c0; }
-.inspector-section { margin: 10px 0 4px; font-size: 11px; color: #8fa6c0; text-transform: uppercase; letter-spacing: .03em; }
+.inspector-field span { color: var(--muted); }
+.inspector-section { margin: 10px 0 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: pre-wrap; }
-.warn { background: #3a2a10; border: 1px solid #8a5a16; padding: 8px; border-radius: 6px; font-size: 12px; margin: 6px 0; }
-#hierarchyTree { max-height: 320px; overflow: auto; border: 1px solid #2c4059; border-radius: 6px; padding: 4px; margin-top: 6px; }
+.warn { background: var(--warn-bg); border: 1px solid var(--warn-border); padding: 8px; border-radius: 6px; font-size: 12px; margin: 6px 0; }
+#hierarchyTree { max-height: 320px; overflow: auto; border: 1px solid var(--border2); border-radius: 6px; padding: 4px; margin-top: 6px; }
 #hierarchySearch { width: 100%; margin-top: 6px; }
 .tree-row { display: flex; align-items: center; gap: 4px; padding: 2px; border-radius: 4px; font-size: 12px; }
 .tree-row:focus { outline: 2px solid #65a5ff; outline-offset: -2px; }
-.tree-row.tree-selected { background: #213c5e; }
-.tree-row.tree-match { background: #3a2a10; }
+.tree-row.tree-selected { background: var(--btn-hover); }
+.tree-row.tree-match { background: var(--warn-bg); }
 .tree-row.tree-dim { opacity: 0.35; }
-.tree-toggle { width: 14px; flex: none; cursor: pointer; user-select: none; color: #8fa6c0; text-align: center; }
+.tree-toggle { width: 14px; flex: none; cursor: pointer; user-select: none; color: var(--muted); text-align: center; }
 .tree-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-muted { color: #8fa6c0; font-size: 11px; }
-.tree-warn { color: #f4a63b; }
+.tree-muted { color: var(--muted); font-size: 11px; }
+.tree-warn { color: var(--st-warn); }
 .tree-actions { display: flex; gap: 3px; flex: none; }
 .tree-row.tree-filtered .tree-label { text-decoration: line-through; opacity: 0.65; }
 .tree-row input[type=checkbox] { margin: 0; flex: none; }
 .tree-action-btn { margin: 0; padding: 2px 6px; font-size: 10px; }
 .small-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
-#detailsEmpty { color: #9cafc6; font-size: 12px; }
+#detailsEmpty { color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -121,6 +135,12 @@ input[type=range] { width: 100%; }
   </div>
   <div class="row">
     <label><input id="coordinateAxes" type="checkbox" checked> Coordinate axes</label>
+  </div>
+  <div class="row">
+    <label><input id="wireframe" type="checkbox"> Wireframe overlay</label>
+  </div>
+  <div class="row">
+    <label><input id="darkMode" type="checkbox" checked> Dark mode</label>
   </div>
   <div class="axis-key"><span class="axis-x">X</span><span class="axis-y">Y</span><span class="axis-z">Z</span></div>
 
@@ -574,34 +594,82 @@ function shader(type, source) {
   return value;
 }
 const vertexShader=shader(gl.VERTEX_SHADER, `
-attribute vec3 a_pos; attribute vec4 a_color; attribute vec4 a_id; attribute float a_vis;
-uniform mat4 u_mvp; uniform float u_selected; varying vec4 v_color; varying vec3 v_world; varying float v_highlight; varying float v_vis;
+attribute vec3 a_pos; attribute vec4 a_color; attribute vec4 a_id; attribute float a_vis; attribute vec4 a_bary;
+uniform mat4 u_mvp; uniform float u_selected; varying vec4 v_color; varying vec3 v_world; varying float v_highlight; varying float v_vis; varying vec3 v_bary;
 void main() {
-  v_vis=a_vis; v_world=a_pos; v_color=a_color; gl_Position=u_mvp*vec4(a_pos,1.0);
+  v_bary=a_bary.xyz; v_vis=a_vis; v_world=a_pos; v_color=a_color; gl_Position=u_mvp*vec4(a_pos,1.0);
   // a_id holds objectId+1 as little-endian bytes (0 = no object); u_selected uses the same encoding.
   float encoded=floor(a_id.r*255.0+0.5)+256.0*floor(a_id.g*255.0+0.5)+65536.0*floor(a_id.b*255.0+0.5);
   v_highlight=(u_selected>0.5 && abs(encoded-u_selected)<0.5) ? 1.0 : 0.0;
 }
 `);
-const fragmentShader=shader(gl.FRAGMENT_SHADER, CLIP_FRAGMENT_PRECISION + `
-varying vec4 v_color; varying vec3 v_world; varying float v_highlight; varying float v_vis;
-uniform float u_opacity;
+// Wireframe overlay: every triangle's own edges, found from barycentric
+// coordinates and screen-space derivatives so the lines stay about 1.5 px wide.
+// It is part of the fill shader, so clipping, hiding and instancing apply to the
+// lines for free. Needs OES_standard_derivatives (nearly universal in WebGL1).
+const derivativesExt=gl.getExtension('OES_standard_derivatives');
+const fragmentShader=shader(gl.FRAGMENT_SHADER, `
+#ifdef GL_OES_standard_derivatives
+#extension GL_OES_standard_derivatives : enable
+#endif
+` + CLIP_FRAGMENT_PRECISION + `
+varying vec4 v_color; varying vec3 v_world; varying float v_highlight; varying float v_vis; varying vec3 v_bary;
+uniform float u_opacity; uniform float u_wire; uniform vec4 u_wire_color;
 ` + CLIP_GLSL + `
 void main() {
   if (v_vis<0.5) discard;
   if (clipDiscard(v_world)) discard;
-  gl_FragColor=vec4(mix(v_color.rgb,vec3(1.0,0.82,0.2),0.5*v_highlight),v_color.a*u_opacity);
+  vec3 rgb=mix(v_color.rgb,vec3(1.0,0.82,0.2),0.5*v_highlight);
+#ifdef GL_OES_standard_derivatives
+  if (u_wire>0.5) {
+    vec3 width=fwidth(v_bary);
+    vec3 line=smoothstep(vec3(0.0),width*1.5,v_bary);
+    float edge=1.0-min(min(line.x,line.y),line.z);
+    rgb=mix(rgb,u_wire_color.rgb,edge*u_wire_color.a);
+  }
+#endif
+  gl_FragColor=vec4(rgb,v_color.a*u_opacity);
 }
 `);
 const program=gl.createProgram(); gl.attachShader(program,vertexShader); gl.attachShader(program,fragmentShader); gl.linkProgram(program);
 if (!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
 const locations={
-  pos:gl.getAttribLocation(program,'a_pos'), color:gl.getAttribLocation(program,'a_color'), id:gl.getAttribLocation(program,'a_id'), vis:gl.getAttribLocation(program,'a_vis'),
+  pos:gl.getAttribLocation(program,'a_pos'), color:gl.getAttribLocation(program,'a_color'), id:gl.getAttribLocation(program,'a_id'), vis:gl.getAttribLocation(program,'a_vis'), bary:gl.getAttribLocation(program,'a_bary'),
+  wire:gl.getUniformLocation(program,'u_wire'), wireColor:gl.getUniformLocation(program,'u_wire_color'),
   selected:gl.getUniformLocation(program,'u_selected'),
   mvp:gl.getUniformLocation(program,'u_mvp'), opacity:gl.getUniformLocation(program,'u_opacity'),
 };
 const clipLoc=clipLocations(gl,program);
 function makeBuffer(values) { const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,values,gl.STATIC_DRAW); return b; }
+
+// --- Presentation: theme and wireframe ---
+function isDark() { return !document.body.classList.contains('light'); }
+function wireOn() { return Boolean(derivativesExt) && document.getElementById('wireframe').checked; }
+// The wireframe's barycentric corner codes repeat (1,0,0) (0,1,0) (0,0,1) per
+// triangle, so one shared buffer serves every chunk and every instanced mesh.
+let baryBuffer=null, baryVertices=0;
+function ensureBary(vertices) {
+  if (baryBuffer && baryVertices>=vertices) return;
+  const count=Math.max(vertices, 3*1024);
+  const data=new Uint8Array(count*4);
+  for (let i=0;i<count;i++) data[i*4+(i%3)]=255;
+  if (!baryBuffer) baryBuffer=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,baryBuffer); gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+  baryVertices=count;
+}
+// `vertices` is how many the draw reads from `byteOffset / 4` on; the shared
+// buffer is built (or grown) the first time the overlay needs it.
+function bindBary(loc, byteOffset, vertices) {
+  if (!(loc>=0)) return; // the picking program has no such attribute (undefined)
+  if (wireOn()) {
+    ensureBary(byteOffset/4+vertices);
+    gl.bindBuffer(gl.ARRAY_BUFFER,baryBuffer); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,4,gl.UNSIGNED_BYTE,true,0,byteOffset);
+  } else { gl.disableVertexAttribArray(loc); gl.vertexAttrib4f(loc,0,0,0,1); }
+}
+function setWireUniforms(L, on) {
+  gl.uniform1f(L.wire, on ? 1 : 0);
+  if (isDark()) gl.uniform4f(L.wireColor,1,1,1,.42); else gl.uniform4f(L.wireColor,.02,.04,.08,.35);
+}
 
 // --- Instanced chunks (chunk format v3) ---
 // A v3 chunk stores each distinct mesh once (local coordinates, one colour) and,
@@ -613,10 +681,11 @@ let forceExpand = false;
 function canInstance() { return Boolean(instExt) && !forceExpand; }
 const instVertexShader = shader(gl.VERTEX_SHADER, `
 attribute vec3 a_pos; attribute vec4 a_m0; attribute vec4 a_m1; attribute vec4 a_m2;
-attribute vec4 a_color; attribute vec4 a_id; attribute float a_vis;
+attribute vec4 a_color; attribute vec4 a_id; attribute float a_vis; attribute vec4 a_bary;
 uniform mat4 u_mvp; uniform float u_selected;
-varying vec4 v_color; varying vec3 v_world; varying float v_highlight; varying float v_vis;
+varying vec4 v_color; varying vec3 v_world; varying float v_highlight; varying float v_vis; varying vec3 v_bary;
 void main() {
+  v_bary=a_bary.xyz;
   vec4 p=vec4(a_pos,1.0);
   vec3 w=vec3(dot(a_m0,p),dot(a_m1,p),dot(a_m2,p));
   v_vis=a_vis; v_world=w; v_color=a_color; gl_Position=u_mvp*vec4(w,1.0);
@@ -629,7 +698,8 @@ if (!gl.getProgramParameter(programInst,gl.LINK_STATUS)) throw new Error(gl.getP
 const instLocations={
   pos:gl.getAttribLocation(programInst,'a_pos'), m0:gl.getAttribLocation(programInst,'a_m0'), m1:gl.getAttribLocation(programInst,'a_m1'),
   m2:gl.getAttribLocation(programInst,'a_m2'), color:gl.getAttribLocation(programInst,'a_color'), id:gl.getAttribLocation(programInst,'a_id'),
-  vis:gl.getAttribLocation(programInst,'a_vis'),
+  vis:gl.getAttribLocation(programInst,'a_vis'), bary:gl.getAttribLocation(programInst,'a_bary'),
+  wire:gl.getUniformLocation(programInst,'u_wire'), wireColor:gl.getUniformLocation(programInst,'u_wire_color'),
   selected:gl.getUniformLocation(programInst,'u_selected'),
   mvp:gl.getUniformLocation(programInst,'u_mvp'), opacity:gl.getUniformLocation(programInst,'u_opacity'),
 };
@@ -643,6 +713,7 @@ function drawInstancedChunk(buffers, L) {
   for (const mesh of buffers.meshes) {
     if (!mesh.instCount) continue;
     gl.bindBuffer(gl.ARRAY_BUFFER,buffers.pos); gl.enableVertexAttribArray(L.pos); gl.vertexAttribPointer(L.pos,3,gl.FLOAT,false,0,mesh.first*12);
+    bindBary(L.bary,mesh.first*4,mesh.count); // mesh vertices start on a triangle boundary, so the pattern lines up
     gl.bindBuffer(gl.ARRAY_BUFFER,buffers.mat);
     [L.m0,L.m1,L.m2].forEach((loc,row) => { gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,4,gl.FLOAT,false,48,mesh.instFirst*48+row*16); });
     gl.bindBuffer(gl.ARRAY_BUFFER,buffers.id); gl.enableVertexAttribArray(L.id); gl.vertexAttribPointer(L.id,4,gl.UNSIGNED_BYTE,true,0,mesh.instFirst*4);
@@ -656,6 +727,7 @@ function drawInstancedChunk(buffers, L) {
   // after these buffers are deleted) would otherwise fail with
   // INVALID_OPERATION because an enabled array has no buffer bound.
   for (const loc of [L.pos,...instanced]) gl.disableVertexAttribArray(loc);
+  if (L.bary>=0) gl.disableVertexAttribArray(L.bary);
 }
 
 const bbox=MANIFEST.bbox;
@@ -710,13 +782,16 @@ function cameraMvp() {
   return mat4mul(perspective(45*Math.PI/180,canvas.width/canvas.height,radius/1000,radius*30),lookAt(eye,[cx,cy,cz],cameraUp));
 }
 function render() {
-  renderPending=false; resize(); gl.clearColor(0.027,0.067,0.122,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  renderPending=false; resize();
+  if (isDark()) gl.clearColor(0.027,0.067,0.122,1); else gl.clearColor(0.985,0.99,1,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
   const opacity=+document.getElementById('opacity').value/100; gl.depthMask(opacity>=0.999);
   const mvp=cameraMvp();
   gl.useProgram(program); gl.uniformMatrix4fv(locations.mvp,false,mvp); gl.uniform1f(locations.opacity,opacity);
   gl.uniform1f(locations.selected,selectedObjectId===null ? 0 : selectedObjectId+1);
   uploadClip(gl,clipLoc,clipData);
+  setWireUniforms(locations,wireOn());
   const drawable=MANIFEST.chunks.map(c => states[c.key]).filter(st => st.loaded && st.visible && st.buffers);
   for (const state of drawable) {
     if (state.buffers.kind==='instanced') continue;
@@ -724,13 +799,16 @@ function render() {
     gl.bindBuffer(gl.ARRAY_BUFFER,state.buffers.color); gl.enableVertexAttribArray(locations.color); gl.vertexAttribPointer(locations.color,4,gl.UNSIGNED_BYTE,true,0,0);
     bindIdAttribute(gl,locations.id,state.buffers.id);
     bindVisibilityAttribute(gl,locations.vis,state.buffers.vis);
+    bindBary(locations.bary,0,state.buffers.count);
     gl.drawArrays(gl.TRIANGLES,0,state.buffers.count);
   }
+  if (locations.bary>=0) gl.disableVertexAttribArray(locations.bary);
   const instancedChunks=drawable.filter(st => st.buffers.kind==='instanced');
   if (instancedChunks.length) {
     gl.useProgram(programInst); gl.uniformMatrix4fv(instLocations.mvp,false,mvp); gl.uniform1f(instLocations.opacity,opacity);
     gl.uniform1f(instLocations.selected,selectedObjectId===null ? 0 : selectedObjectId+1);
     uploadClip(gl,instClipLoc,clipData);
+    setWireUniforms(instLocations,wireOn());
     for (const state of instancedChunks) drawInstancedChunk(state.buffers,instLocations);
     gl.useProgram(program);
   }
@@ -740,6 +818,8 @@ function render() {
     gl.uniform1f(locations.opacity,1);
     uploadClip(gl,clipLoc,null);
     gl.uniform1f(locations.selected,0);
+    gl.uniform1f(locations.wire,0);
+    gl.disableVertexAttribArray(locations.bary); gl.vertexAttrib4f(locations.bary,0,0,0,1);
     gl.bindBuffer(gl.ARRAY_BUFFER,axisPosBuffer); gl.enableVertexAttribArray(locations.pos); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
     gl.bindBuffer(gl.ARRAY_BUFFER,axisColorBuffer); gl.enableVertexAttribArray(locations.color); gl.vertexAttribPointer(locations.color,4,gl.UNSIGNED_BYTE,true,0,0);
     bindIdAttribute(gl,locations.id,null);
@@ -766,6 +846,12 @@ document.getElementById('viewXZNeg').onclick=()=>setCamera(0,-Math.PI/2,[0,0,1])
 document.getElementById('viewYZPos').onclick=()=>setCamera(Math.PI/2,0,[0,0,1]);
 document.getElementById('viewYZNeg').onclick=()=>setCamera(-Math.PI/2,0,[0,0,1]);
 document.getElementById('coordinateAxes').addEventListener('change',requestRender);
+document.getElementById('wireframe').addEventListener('change',requestRender);
+document.getElementById('darkMode').addEventListener('change',e => { document.body.classList.toggle('light',!e.target.checked); requestRender(); });
+if (!derivativesExt) {
+  const box=document.getElementById('wireframe');
+  box.disabled=true; box.parentElement.title='This browser lacks OES_standard_derivatives, which the wireframe needs.';
+}
 document.getElementById('opacity').addEventListener('input',requestRender);
 document.getElementById('loadAll').onclick=async()=>{ for(const check of document.querySelectorAll('input[data-layer-key]'))check.checked=true; for(const key of Object.keys(grouped).flatMap(s=>Object.keys(grouped[s]).map(l=>`${s}\x1f${l}`)))await setLayer(key,true); };
 document.getElementById('hideAll').onclick=async()=>{ for(const check of document.querySelectorAll('input[data-layer-key]'))check.checked=false; for(const key of [...selectedLayers])await setLayer(key,false); };
@@ -1172,6 +1258,8 @@ function captureViewSections() {
     display: {
       opacity: +document.getElementById('opacity').value,
       axes: document.getElementById('coordinateAxes').checked,
+      wireframe: document.getElementById('wireframe').checked,
+      theme: isDark() ? 'dark' : 'light',
       releaseHidden: document.getElementById('releaseHidden').checked,
     },
     clipping: getClipState(),
@@ -1199,7 +1287,8 @@ async function applyViewSections(state, report) {
     if (d.opacity !== undefined) { input('opacity').value = d.opacity; fire('opacity', 'input'); }
     if (d.axes !== undefined) { input('coordinateAxes').checked = d.axes; fire('coordinateAxes', 'change'); }
     if (d.releaseHidden !== undefined) input('releaseHidden').checked = d.releaseHidden;
-    if (d.wireframe !== undefined || d.theme !== undefined) report.ignored.push('wireframe and theme');
+    if (d.wireframe !== undefined) { input('wireframe').checked = d.wireframe && Boolean(derivativesExt); fire('wireframe', 'change'); }
+    if (d.theme !== undefined) { input('darkMode').checked = d.theme === 'dark'; fire('darkMode', 'change'); }
     report.applied.push('display');
   }
   if (state.camera) {

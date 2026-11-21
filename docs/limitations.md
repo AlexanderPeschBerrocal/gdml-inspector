@@ -224,7 +224,7 @@ filter selects the same placements in each (tested on the same scene).
   mesh; nothing fills the cut, so a cut view shows surfaces only and is not a
   quantitative solid section. The panel says so.
 - Clipping applies to filled surfaces, the wireframe overlay, selection
-  highlighting and picking alike (the lazy viewer has no wireframe overlay).
+  highlighting and picking alike in both viewers.
   The coordinate axes are never clipped.
 - No visible plane gizmo (the issue marked it optional) and no saved-view UI
   yet: the state is serialisable (`getClipState()`/`setClipState()`) for issue
@@ -246,8 +246,8 @@ projection (always perspective, 45 degrees, recorded explicitly), opacity,
 axes, the full clipping state, and the geometry it was saved for (schema
 version, input sha256, filename). Both save the object filters (search,
 exclude, solid type, materials, invert), hidden and isolated placements, the
-selected placement and the hierarchy tree's expansion and search. Standalone
-adds wireframe and theme; lazy adds the selected subsystem/layers and "unload
+selected placement and the hierarchy tree's expansion and search. Both save the wireframe
+overlay and the theme; lazy adds the selected subsystem/layers and "unload
 hidden".
 
 - **Stable identifiers:** placements are stored by path and layers by
@@ -268,7 +268,7 @@ hidden".
   update gdml-inspector or re-save.
 - **Across viewers:** a view loaded in the other viewer applies what both
   share (camera, projection, opacity, axes, clipping, filters, hierarchy) and
-  says what it ignored (wireframe and theme in lazy; layers in standalone).
+  says what it ignored (layers in standalone).
 - **Not saved:** material colours (fixed by the backend, not user-editable),
   the diagnostics filters, and the scroll position of the hierarchy tree. Lazy layer names come from this
   tool's heuristic classification, so a changed classification can make a layer
@@ -364,6 +364,28 @@ hidden".
   overrides]]` entry for `pyg4ometry.*` is the only suppression in the
   config, and installing the `typing` dependency group never installs
   pyg4ometry itself.
+
+## Presentation (both viewers)
+
+- **Wireframe overlay and light/dark theme** are in both viewers with the same
+  controls, and both are saved in and restored from view-state files. The lazy
+  viewer starts dark (its original look) and the standalone viewer light.
+- The overlay draws **every triangle edge**, including the diagonals that split
+  a flat face, not only the solid's real edges; telling the two apart (by dihedral
+  angle) is not done. Lines are about 1.5 px wide, tinted white on the dark theme
+  and near-black on the light one, over the fill.
+- The two viewers draw the overlay differently: standalone with a line buffer per
+  triangle edge, lazy inside the fill shader from barycentric coordinates and
+  screen-space derivatives (`OES_standard_derivatives`, available in nearly every
+  WebGL1 browser; the checkbox is disabled with an explanation where it is not).
+  The lazy approach needs one 4-byte-per-vertex buffer shared by all chunks and no
+  extra geometry, and clipping, hiding, instancing and highlight apply to the
+  lines automatically. Line weight and tint are close but not pixel-identical
+  between the viewers.
+- Not done yet (issue #6): orthographic projection, a length scale bar, a
+  fit-to-selection/fit-all reset that survives an empty filter, screenshot export,
+  per-selection opacity or colours, and a documented transparency-ordering
+  technique.
 
 ## Rendering and size limits
 
@@ -544,8 +566,8 @@ object.
   Transparency uses the inherited rendering approach: opacity is for display
   only, so a click always selects the frontmost surface under the cursor, even
   when it is drawn translucent; there is no click-through for translucent shells.
-- The lazy viewer groups objects by heuristics, not detector-provided hierarchy.
-  It has no wireframe mode.
+- By default the lazy viewer groups objects by heuristics, not
+  detector-provided hierarchy (see Grouping).
 - Lazy mode precomputes the complete selected mesh in Python before writing it.
   It is lazy in browser transfer/rendering, not in Python preprocessing.
 - Object/vertex limits stop traversal, but the inherited single-file vertex
