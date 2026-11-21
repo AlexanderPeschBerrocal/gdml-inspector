@@ -164,6 +164,8 @@ input[type=range] { width: 100%; }
   <h2>Clipping</h2>
   <div id="clipPanel"></div>
   <div class="row"><label>Opacity</label><input id="opacity" type="range" min="10" max="100" value="100"></div>
+  <div class="row"><label title="Blends translucent surfaces without regard to draw order (weighted blended OIT); off draws them in load order"><input id="oit" type="checkbox" checked> Order-independent transparency</label></div>
+  <div id="oitNote" class="muted"></div>
 
   <h2>Hierarchy</h2>
   <div class="muted" id="hierarchyNote">The placement tree is loaded on demand (it downloads placements.json) and opens automatically when you pick an object.</div>
@@ -199,6 +201,7 @@ input[type=range] { width: 100%; }
 __CLIPPING_JS__
 __CAMERA_JS__
 __SCREENSHOT_JS__
+__OIT_JS__
 __PICKING_JS__
 __FILTERS_JS__
 __TREE_JS__
@@ -392,6 +395,8 @@ function cancelChunk(chunk) {
   updateLayerStatus(chunk.baseKey); updateProgress();
 }
 
+// Whether any vertex colour has alpha below 1 (a material's own translucency).
+function hasTranslucentColors(colors) { for (let i=3;i<colors.length;i+=4) if (colors[i]<255) return true; return false; }
 // Baked layout: world-space positions, per-vertex colour and (v2) object id.
 function bakedBuffers(positions, colors, idBytes, vertices) {
   return {
@@ -405,6 +410,7 @@ function bakedBuffers(positions, colors, idBytes, vertices) {
     ids:idBytes ? new Uint32Array(idBytes.slice().buffer) : null,
     count:vertices,
     gpuBytes:vertices*GPU_BYTES_PER_VERTEX,
+    translucent:hasTranslucentColors(colors),
   };
 }
 // Instanced layout (v3): see the section above drawInstancedChunk.
@@ -457,6 +463,7 @@ function buildInstancedBuffers(chunk, data, view) {
     meshes:table,
     count:logical, // vertices drawn, counting every instance
     gpuBytes:meshVertices*12+instances*(48+4+1),
+    translucent:table.some(mesh => mesh.rgba[3]<255),
   };
 }
 
@@ -629,7 +636,7 @@ const fragmentShader=shader(gl.FRAGMENT_SHADER, `
 ` + CLIP_FRAGMENT_PRECISION + `
 varying vec4 v_color; varying vec3 v_world; varying float v_highlight; varying float v_vis; varying vec3 v_bary;
 uniform float u_opacity; uniform float u_wire; uniform vec4 u_wire_color;
-` + CLIP_GLSL + `
+` + CLIP_GLSL + OIT_GLSL + `
 void main() {
   if (v_vis<0.5) discard;
   if (clipDiscard(v_world)) discard;
@@ -642,7 +649,9 @@ void main() {
     rgb=mix(rgb,u_wire_color.rgb,edge*u_wire_color.a);
   }
 #endif
-  gl_FragColor=vec4(rgb,v_color.a*u_opacity);
+  vec4 written;
+  if (!oitOutput(v_world,vec4(rgb,v_color.a*u_opacity),written)) discard;
+  gl_FragColor=written;
 }
 `);
 const program=gl.createProgram(); gl.attachShader(program,vertexShader); gl.attachShader(program,fragmentShader); gl.linkProgram(program);
@@ -650,6 +659,7 @@ if (!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgr
 const locations={
   pos:gl.getAttribLocation(program,'a_pos'), color:gl.getAttribLocation(program,'a_color'), id:gl.getAttribLocation(program,'a_id'), vis:gl.getAttribLocation(program,'a_vis'), bary:gl.getAttribLocation(program,'a_bary'),
   wire:gl.getUniformLocation(program,'u_wire'), wireColor:gl.getUniformLocation(program,'u_wire_color'),
+  pass:gl.getUniformLocation(program,'u_pass'), eye:gl.getUniformLocation(program,'u_eye'), dir:gl.getUniformLocation(program,'u_dir'), oitScale:gl.getUniformLocation(program,'u_oit_scale'),
   selected:gl.getUniformLocation(program,'u_selected'),
   mvp:gl.getUniformLocation(program,'u_mvp'), opacity:gl.getUniformLocation(program,'u_opacity'),
 };
@@ -714,6 +724,7 @@ const instLocations={
   m2:gl.getAttribLocation(programInst,'a_m2'), color:gl.getAttribLocation(programInst,'a_color'), id:gl.getAttribLocation(programInst,'a_id'),
   vis:gl.getAttribLocation(programInst,'a_vis'), bary:gl.getAttribLocation(programInst,'a_bary'),
   wire:gl.getUniformLocation(programInst,'u_wire'), wireColor:gl.getUniformLocation(programInst,'u_wire_color'),
+  pass:gl.getUniformLocation(programInst,'u_pass'), eye:gl.getUniformLocation(programInst,'u_eye'), dir:gl.getUniformLocation(programInst,'u_dir'), oitScale:gl.getUniformLocation(programInst,'u_oit_scale'),
   selected:gl.getUniformLocation(programInst,'u_selected'),
   mvp:gl.getUniformLocation(programInst,'u_mvp'), opacity:gl.getUniformLocation(programInst,'u_opacity'),
 };
@@ -799,19 +810,29 @@ function updateScaleBar() {
   document.getElementById('scaleBarLine').style.width=bar.px+'px';
   document.getElementById('scaleBarLabel').textContent=bar.label+(projection==='perspective' ? ' (at the target)' : '');
 }
-function render() {
-  renderPending=false; resize();
-  if (captureBackground) gl.clearColor(captureBackground[0],captureBackground[1],captureBackground[2],1);
-  else if (isDark()) gl.clearColor(0.027,0.067,0.122,1); else gl.clearColor(0.985,0.99,1,1);
-  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  gl.enable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
-  const opacity=+document.getElementById('opacity').value/100; gl.depthMask(opacity>=0.999);
-  const mvp=cameraMvp();
+// Translucent surfaces use weighted blended order-independent transparency
+// (assets/oit.js) where the browser can render to half-float targets.
+const oit=createOit(gl);
+let lastFrameUsedOit=false; // for tests and curiosity
+if (!oit.supported) {
+  document.getElementById('oit').checked=false; document.getElementById('oit').disabled=true;
+  document.getElementById('oitNote').textContent='This browser cannot render to half-float targets, so translucent surfaces are drawn in the order they were loaded.';
+}
+function setOitUniforms(L,pass) {
+  const camera=cameraState(), eye=cameraEye(camera), target=cameraTarget(camera);
+  const direction=[target[0]-eye[0],target[1]-eye[1],target[2]-eye[2]];
+  const length=Math.hypot(...direction)||1;
+  gl.uniform1f(L.pass,pass); gl.uniform3fv(L.eye,eye);
+  gl.uniform3f(L.dir,direction[0]/length,direction[1]/length,direction[2]/length);
+  gl.uniform1f(L.oitScale,radius);
+}
+// Draws every loaded, visible chunk (baked, then instanced) in one pass.
+function drawGeometry(pass,opacity,mvp,drawable) {
   gl.useProgram(program); gl.uniformMatrix4fv(locations.mvp,false,mvp); gl.uniform1f(locations.opacity,opacity);
   gl.uniform1f(locations.selected,selectedObjectId===null ? 0 : selectedObjectId+1);
   uploadClip(gl,clipLoc,clipData);
   setWireUniforms(locations,wireOn());
-  const drawable=MANIFEST.chunks.map(c => states[c.key]).filter(st => st.loaded && st.visible && st.buffers);
+  setOitUniforms(locations,pass);
   for (const state of drawable) {
     if (state.buffers.kind==='instanced') continue;
     gl.bindBuffer(gl.ARRAY_BUFFER,state.buffers.pos); gl.enableVertexAttribArray(locations.pos); gl.vertexAttribPointer(locations.pos,3,gl.FLOAT,false,0,0);
@@ -828,9 +849,36 @@ function render() {
     gl.uniform1f(instLocations.selected,selectedObjectId===null ? 0 : selectedObjectId+1);
     uploadClip(gl,instClipLoc,clipData);
     setWireUniforms(instLocations,wireOn());
+    setOitUniforms(instLocations,pass);
     for (const state of instancedChunks) drawInstancedChunk(state.buffers,instLocations);
     gl.useProgram(program);
   }
+}
+function render() {
+  renderPending=false; resize();
+  const opacity=+document.getElementById('opacity').value/100;
+  const drawable=MANIFEST.chunks.map(c => states[c.key]).filter(st => st.loaded && st.visible && st.buffers);
+  const useOit=oit.supported && document.getElementById('oit').checked && (opacity<0.999 || drawable.some(st => st.buffers.translucent));
+  lastFrameUsedOit=useOit;
+  if (useOit) oit.begin(canvas.width,canvas.height); else gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  if (captureBackground) gl.clearColor(captureBackground[0],captureBackground[1],captureBackground[2],1);
+  else if (isDark()) gl.clearColor(0.027,0.067,0.122,1); else gl.clearColor(0.985,0.99,1,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  const mvp=cameraMvp();
+  gl.enable(gl.DEPTH_TEST);
+  if (useOit) {
+    gl.disable(gl.BLEND); gl.depthMask(true);
+    drawGeometry(1,opacity,mvp,drawable);   // opaque surfaces: colour and depth
+    oit.beginAccumulate(); drawGeometry(2,opacity,mvp,drawable);
+    oit.beginReveal(); drawGeometry(3,opacity,mvp,drawable);
+    oit.composite();
+  } else {
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(opacity>=0.999);
+    drawGeometry(0,opacity,mvp,drawable);
+  }
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+  gl.useProgram(program); gl.uniform1f(locations.pass,0);
   const axesEnabled=document.getElementById('coordinateAxes').checked;
   if (axesEnabled) {
     gl.disable(gl.DEPTH_TEST);
@@ -871,6 +919,7 @@ document.getElementById('viewYZPos').onclick=()=>setCamera(Math.PI/2,0,[0,0,1]);
 document.getElementById('viewYZNeg').onclick=()=>setCamera(-Math.PI/2,0,[0,0,1]);
 document.getElementById('coordinateAxes').addEventListener('change',requestRender);
 document.getElementById('wireframe').addEventListener('change',requestRender);
+document.getElementById('oit').addEventListener('change',requestRender);
 document.getElementById('darkMode').addEventListener('change',e => { document.body.classList.toggle('light',!e.target.checked); requestRender(); });
 if (!derivativesExt) {
   const box=document.getElementById('wireframe');

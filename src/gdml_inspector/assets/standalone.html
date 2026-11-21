@@ -99,6 +99,8 @@ input[type=checkbox] { width: auto; }
     <button id="viewYZNeg" title="Look toward the origin along +x">YZ -X</button>
   </div>
   <label class="row"><span>Opacity</span><input id="opacity" type="range" min="5" max="100" value="78"></label>
+  <label title="Blends translucent surfaces without regard to draw order (weighted blended OIT); off draws them in file order"><input id="oit" type="checkbox" checked> Order-independent transparency</label>
+  <div id="oitNote" class="muted"></div>
   <label><input id="wireframe" type="checkbox"> Wireframe overlay</label>
   <label><input id="coordinateAxes" type="checkbox" checked> Coordinate axes</label>
   <div class="axis-key"><span class="axis-x">X</span><span class="axis-y">Y</span><span class="axis-z">Z</span></div>
@@ -138,6 +140,7 @@ input[type=checkbox] { width: auto; }
 __CLIPPING_JS__
 __CAMERA_JS__
 __SCREENSHOT_JS__
+__OIT_JS__
 __PICKING_JS__
 __FILTERS_JS__
 __TREE_JS__
@@ -294,12 +297,14 @@ void main() {
 }`);
 const fs = shader(gl.FRAGMENT_SHADER, CLIP_FRAGMENT_PRECISION + `
 varying vec4 v_col; varying vec3 v_pos; varying float v_highlight;
-` + CLIP_GLSL + `
+` + CLIP_GLSL + OIT_GLSL + `
 void main() {
   if (v_col.a < 0.01) discard;
   if (clipDiscard(v_pos)) discard;
   vec3 tinted = mix(v_col.rgb, vec3(1.0, 0.82, 0.2), 0.5 * v_highlight);
-  gl_FragColor = vec4(tinted, v_col.a);
+  vec4 written;
+  if (!oitOutput(v_pos, vec4(tinted, v_col.a), written)) discard;
+  gl_FragColor = written;
 }`);
 const prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog); gl.useProgram(prog);
 const locPos = gl.getAttribLocation(prog, 'a_pos');
@@ -331,6 +336,29 @@ const highlightBuf = bindArray('a_highlight', highlight, 1);
 const uMvp = gl.getUniformLocation(prog, 'u_mvp');
 const uOpacity = gl.getUniformLocation(prog, 'u_opacity');
 const clipLoc = clipLocations(gl, prog);
+// Translucent surfaces use weighted blended order-independent transparency
+// (assets/oit.js) where the browser can render to half-float targets.
+const oit = createOit(gl);
+const uPass = gl.getUniformLocation(prog, 'u_pass');
+const uEye = gl.getUniformLocation(prog, 'u_eye');
+const uDir = gl.getUniformLocation(prog, 'u_dir');
+const uOitScale = gl.getUniformLocation(prog, 'u_oit_scale');
+let lastFrameUsedOit = false; // for tests and curiosity
+if (!oit.supported) {
+  document.getElementById('oit').checked = false; document.getElementById('oit').disabled = true;
+  document.getElementById('oitNote').textContent = 'This browser cannot render to half-float targets, so translucent surfaces are drawn in file order.';
+}
+// Any colour (a material's own alpha) below 1 makes the scene translucent whatever the slider says.
+const sceneHasTranslucentColors = (() => { for (let i = 3; i < colorsRaw.length; i += 4) if (colorsRaw[i] < 255) return true; return false; })();
+function setOitUniforms(pass) {
+  const camera = cameraState(), eye = cameraEye(camera), target = cameraTarget(camera);
+  const direction = [target[0]-eye[0], target[1]-eye[1], target[2]-eye[2]];
+  const length = Math.hypot(...direction) || 1;
+  gl.uniform1f(uPass, pass);
+  gl.uniform3fv(uEye, eye);
+  gl.uniform3f(uDir, direction[0]/length, direction[1]/length, direction[2]/length);
+  gl.uniform1f(uOitScale, radius);
+}
 let wireBuffers = null;
 
 // --- Depth-correct picking (see assets/picking.js) -----------------------
@@ -495,12 +523,10 @@ function render() {
   drawFrame();
   requestAnimationFrame(render);
 }
-function drawFrame() {
-  resize();
-  clearCanvas();
-  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.disable(gl.DEPTH_TEST);
-  const mvp = cameraMvp();
-  gl.uniformMatrix4fv(uMvp, false, mvp);
+function drawSurfaces(pass) {
+  gl.useProgram(prog);
+  setOitUniforms(pass);
+  gl.uniformMatrix4fv(uMvp, false, cameraMvp());
   setAttrib(locPos, surfacePosBuf, 3);
   setAttrib(locCol, surfaceColBuf, 4);
   setAttrib(locVis, visibleBuf, 1);
@@ -508,6 +534,27 @@ function drawFrame() {
   gl.uniform1f(uOpacity, +document.getElementById('opacity').value/100);
   uploadClip(gl, clipLoc, clipData);
   gl.drawArrays(gl.TRIANGLES, 0, positions.length/3);
+}
+function drawFrame() {
+  resize();
+  const opacity = +document.getElementById('opacity').value/100;
+  const useOit = oit.supported && document.getElementById('oit').checked && (opacity < 0.999 || sceneHasTranslucentColors);
+  lastFrameUsedOit = useOit;
+  if (useOit) oit.begin(canvas.width, canvas.height); else gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  clearCanvas();
+  const mvp = cameraMvp();
+  if (useOit) {
+    gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
+    drawSurfaces(1);                  // opaque surfaces: colour and depth
+    oit.beginAccumulate(); drawSurfaces(2);
+    oit.beginReveal(); drawSurfaces(3);
+    oit.composite();
+  } else {
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.disable(gl.DEPTH_TEST);
+    drawSurfaces(0);
+  }
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.disable(gl.DEPTH_TEST);
+  gl.useProgram(prog); gl.uniform1f(uPass, 0); gl.uniformMatrix4fv(uMvp, false, mvp);
   if (document.getElementById('wireframe').checked) {
     const wire = buildWireBuffers();
     setAttrib(locPos, wire.posBuf, 3);

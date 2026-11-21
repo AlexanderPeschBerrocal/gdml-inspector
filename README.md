@@ -64,6 +64,7 @@ destination. `python -m gdml_inspector` supports the same options as the main CL
 | Wireframe overlay and light/dark theme | Yes | Yes |
 | Perspective/orthographic projection, scale bar, fit all/selection | Yes | Yes |
 | PNG screenshot at an explicit size (scale bar, caption, legend, transparent background) | Yes | Yes |
+| Order-independent transparency for overlapping translucent surfaces | Yes | Yes |
 | Physical-volume hierarchy tree with search and focus | Yes (hide/isolate too) | Yes, hide/isolate too (needs a v2 export) |
 | Subsystem/layer toggles and unloading hidden geometry | Not applicable | Yes |
 | Structured diagnostics (code, severity, category, construct, backend) | Yes | Yes |

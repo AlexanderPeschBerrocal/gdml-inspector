@@ -54,6 +54,9 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Both viewers: weighted blended order-independent transparency (checkbox, on by
+  default), so overlapping translucent surfaces no longer depend on draw order.
+  Falls back to the previous drawing when half-float targets are unavailable.
 - Both viewers: a Screenshot panel that saves a PNG at an explicit pixel size
   (up to 8192 per side or the GPU limit) without the page's panels, with a choice
   of theme, white, black or exactly-recovered transparent background, and optional

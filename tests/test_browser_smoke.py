@@ -304,12 +304,9 @@ def test_harness_detects_a_shader_that_fails_to_compile(
 ):
     broken = tmp_path / "broken-shader.html"
     text = standalone_html.read_text(encoding="utf-8")
-    assert "gl_FragColor = vec4(tinted, v_col.a);" in text
+    assert "vec4(tinted, v_col.a), written" in text
     broken.write_text(
-        text.replace(
-            "gl_FragColor = vec4(tinted, v_col.a);",
-            "gl_FragColor = vec4(tinted v_col.a);",
-        ),
+        text.replace("vec4(tinted, v_col.a), written", "vec4(tinted v_col.a), written"),
         encoding="utf-8",
     )
     watched_page.page.goto(broken.resolve().as_uri())
