@@ -25,7 +25,9 @@ body.light {
 }
 aside { overflow: auto; padding: 14px; background: var(--panel); border-right: 1px solid var(--border); }
 main { position: relative; min-width: 0; }
-canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+/* Filled absolutely so the canvas's CSS size never follows its drawing buffer (a
+   screenshot borrows the buffer at another size and aspect ratio). */
+canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
 canvas:active { cursor: grabbing; }
 h1 { font-size: 17px; margin: 0 0 4px; }
 h2 { font-size: 13px; margin: 16px 0 7px; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
@@ -151,6 +153,8 @@ input[type=range] { width: 100%; }
   </div>
   <div class="axis-key"><span class="axis-x">X</span><span class="axis-y">Y</span><span class="axis-z">Z</span></div>
 
+  <h2>Screenshot</h2>
+  <div id="screenshotPanel"></div>
   <h2>View state</h2>
   <div id="viewStatePanel"></div>
 
@@ -194,6 +198,7 @@ input[type=range] { width: 100%; }
 <script>
 __CLIPPING_JS__
 __CAMERA_JS__
+__SCREENSHOT_JS__
 __PICKING_JS__
 __FILTERS_JS__
 __TREE_JS__
@@ -758,7 +763,16 @@ const axisColorBuffer=makeBuffer(axisColors);
 let yaw=-0.65,pitch=0.45,dist=radius*1.35,panX=0,panY=0,renderPending=false;
 let viewCenter=center.slice();
 let cameraUp=[0,1,0];
-function resize() { const dpr=window.devicePixelRatio||1,w=Math.floor(canvas.clientWidth*dpr),h=Math.floor(canvas.clientHeight*dpr); if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);} }
+// While a screenshot is being rendered the drawing buffer takes the requested
+// size (the canvas's CSS size, and so the page, is untouched) and, optionally,
+// another background; see assets/screenshot.js.
+let captureSize=null, captureBackground=null;
+function resize() {
+  const dpr=window.devicePixelRatio||1;
+  const w=captureSize ? captureSize[0] : Math.floor(canvas.clientWidth*dpr);
+  const h=captureSize ? captureSize[1] : Math.floor(canvas.clientHeight*dpr);
+  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}
+}
 function requestRender() { if(renderPending)return; renderPending=true; requestAnimationFrame(render); }
 function updateAxisLabels(mvp,enabled) {
   const endpoints=[
@@ -787,7 +801,8 @@ function updateScaleBar() {
 }
 function render() {
   renderPending=false; resize();
-  if (isDark()) gl.clearColor(0.027,0.067,0.122,1); else gl.clearColor(0.985,0.99,1,1);
+  if (captureBackground) gl.clearColor(captureBackground[0],captureBackground[1],captureBackground[2],1);
+  else if (isDark()) gl.clearColor(0.027,0.067,0.122,1); else gl.clearColor(0.985,0.99,1,1);
   gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
   const opacity=+document.getElementById('opacity').value/100; gl.depthMask(opacity>=0.999);
@@ -1404,6 +1419,49 @@ async function applyViewSections(state, report) {
   }
   requestRender();
 }
+// --- Screenshot export (see assets/screenshot.js) ---
+// A screenshot shows what is loaded and visible; the caption says how much that is.
+let screenshotAxes=null;
+buildScreenshotPanel(document.getElementById('screenshotPanel'), {
+  canvas, gl,
+  drawAt(width, height, {background, axes}) {
+    const box=document.getElementById('coordinateAxes');
+    if (screenshotAxes===null) screenshotAxes=box.checked;
+    box.checked=axes;
+    captureSize=[width,height]; captureBackground=background;
+    render();
+  },
+  restore() {
+    captureSize=null; captureBackground=null;
+    if (screenshotAxes!==null) document.getElementById('coordinateAxes').checked=screenshotAxes;
+    screenshotAxes=null;
+    render();
+  },
+  camera: cameraState,
+  mvp: cameraMvp,
+  axes: () => [['X',[axisLength,0,0],'#ef4444'],['Y',[0,axisLength,0],'#22c55e'],['Z',[0,0,axisLength],'#3b82f6']]
+    .map(([text,point,color]) => ({text,point,color})),
+  info() {
+    const loaded=MANIFEST.chunks.filter(c => states[c.key].loaded && states[c.key].visible).length;
+    const tool=MANIFEST.provenance && MANIFEST.provenance.tool;
+    const lines=[MANIFEST.sourceFile, `Lengths in mm · ${projection} projection · ${loaded} of ${MANIFEST.chunks.length} chunks loaded and shown`];
+    if (MANIFEST.provenance) lines.push(`input sha256 ${MANIFEST.provenance.input.sha256.slice(0,12)}…`);
+    lines.push(tool ? `${tool.name} ${tool.version}` : 'gdml-inspector');
+    return lines;
+  },
+  // Materials of what is shown. Needs the placement metadata; without it every material is listed.
+  async materials() {
+    const loaded=await ensurePlacements();
+    const colour=name => { const c=MANIFEST.materialColors[name]||[128,128,128,255]; return `rgba(${c[0]},${c[1]},${c[2]},${Math.max(c[3]/255,.35)})`; };
+    if (!loaded) return Object.keys(MANIFEST.materials).sort().map(name => ({name,color:colour(name)}));
+    const layers=new Set(MANIFEST.chunks.filter(c => states[c.key].loaded && states[c.key].visible).map(c => c.baseKey));
+    const used=new Set();
+    loaded.objects.forEach((o,id) => { if ((!visibleMask || visibleMask[id]) && layers.has(o.chunk)) used.add(o.material); });
+    return [...used].sort().map(name => ({name,color:colour(name)}));
+  },
+  dark: isDark,
+}, (MANIFEST.sourceFile||'detector').replace(/\.[^.]+$/, ''));
+
 buildViewStatePanel(document.getElementById('viewStatePanel'), {
   viewer: 'lazy',
   bbox: MANIFEST.bbox,

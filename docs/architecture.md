@@ -44,6 +44,9 @@ keeps both descriptions of each chunk until the part is closed (full, or release
 early by `--memory-budget`), when its bytes are written to a spill directory and
 its arrays freed.
 
+`screenshot.js` renders a frame at an explicit size through each viewer's own draw
+path (the viewer lends its canvas through a small set of hooks) and annotates it.
+
 The camera maths shared by both viewers (matrices, perspective or orthographic
 projection, the scale bar and the fit rule) is `camera.js`.
 

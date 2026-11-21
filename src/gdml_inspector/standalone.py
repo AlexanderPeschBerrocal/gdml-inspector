@@ -51,6 +51,7 @@ def write_html(
             {
                 "CLIPPING_JS": read_asset("clipping.js"),
                 "CAMERA_JS": read_asset("camera.js"),
+                "SCREENSHOT_JS": read_asset("screenshot.js"),
                 "PICKING_JS": read_asset("picking.js"),
                 "FILTERS_JS": read_asset("filters.js"),
                 "TREE_JS": read_asset("tree.js"),
