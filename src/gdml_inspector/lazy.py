@@ -24,6 +24,13 @@ from urllib.parse import quote, unquote
 from . import __version__
 from . import geometry as base
 from ._assets import read_asset, render_template
+from .grouping import (
+    GROUPING_STRATEGIES,
+    Grouping,
+    GroupingError,
+    canonical_material,
+    classify_chunk,  # noqa: F401  (re-exported: it used to live here)
+)
 from .hierarchy import (
     ASSEMBLY,
     HAS_GLOBAL,
@@ -81,10 +88,6 @@ def safe_name(text: str) -> str:
     return text[:120] or "chunk"
 
 
-def canonical_material(name: str) -> str:
-    return base.semantic_name(name)
-
-
 def bbox_union(
     target_min: list[float],
     target_max: list[float],
@@ -94,70 +97,6 @@ def bbox_union(
     for axis in range(3):
         target_min[axis] = min(target_min[axis], float(lo[axis]))
         target_max[axis] = max(target_max[axis], float(hi[axis]))
-
-
-def classify_chunk(
-    volume: base.VolumeDef,
-    path: str,
-    lo: Sequence[float],
-    hi: Sequence[float],
-    radial_min: float,
-    radial_max: float,
-) -> tuple[str, str]:
-    """Return a human-readable subsystem and layer for one placed volume."""
-
-    semantic_volume = base.semantic_name(volume.name)
-    semantic_solid = base.semantic_name(volume.solid)
-    semantic_path = base.semantic_path(path)
-    material = canonical_material(volume.material)
-    text = f"{semantic_volume} {semantic_solid} {semantic_path} {material}".lower()
-
-    def calo_layer(prefix: str) -> str:
-        match = re.search(rf"{prefix.lower()}(\d+)(?:_(\d+))?", text)
-        index = match.group(1) if match else "?"
-        if match and match.group(2):
-            index += f".{match.group(2)}"
-        region = "Endcap" if "endcap" in text else "Barrel"
-        side = ""
-        if "forward" in text:
-            side = " +z"
-        elif "back" in text or "backward" in text:
-            side = " -z"
-        return f"{region}{side} layer {index}"
-
-    if "ecal" in text:
-        return "ECAL", calo_layer("ecal")
-    if "hcal" in text:
-        return "HCAL", calo_layer("hcal")
-    if "irongap" in text or "iron_gap" in text:
-        region = "Endcap" if "endcap" in text else "Barrel"
-        side = ""
-        if "forward" in text:
-            side = " +z"
-        elif "back" in text or "backward" in text:
-            side = " -z"
-        return "Calo support", f"{region}{side} iron gap"
-
-    tracker_tokens = ("inner", "trk", "pixel", "pix", "strip", "silicon", "g4_si")
-    if any(token in text for token in tracker_tokens):
-        z_span = float(hi[2]) - float(lo[2])
-        radial_span = max(radial_max - radial_min, 1.0e-9)
-        z_center = 0.5 * (float(lo[2]) + float(hi[2]))
-        radial_center = 0.5 * (radial_min + radial_max)
-        is_endcap = "endcap" in text or (
-            abs(z_center) > 1.0 and z_span < 4.0 * radial_span
-        )
-        if is_endcap:
-            side = "+z" if z_center >= 0.0 else "-z"
-            layer = f"Endcap {side} |z|≈{round(abs(z_center))} mm"
-        else:
-            layer = f"Barrel r≈{round(radial_center)} mm"
-        return "Tracker", layer
-
-    label = base.semantic_name(volume.name)
-    if material.lower().startswith(("galactic", "g4_galactic")):
-        label = "Vacuum/container"
-    return "Other", label
 
 
 @dataclass
@@ -287,9 +226,11 @@ class LazyBuilderMixin:
         chunk_vertices: int,
         instancing: str = "auto",
         memory_budget: int = 512,
+        grouping: Grouping | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(*args, **kwargs)
+        self.grouping = grouping or Grouping()
         self.memory_budget = max(0, int(memory_budget))  # MiB; 0 = unlimited
         # Where closed parts are written while the scene is still being built
         # (set by the exporter; None keeps every part in memory until the end).
@@ -402,7 +343,9 @@ class LazyBuilderMixin:
         ):
             return
 
-        subsystem, layer = classify_chunk(volume, path, lo, hi, radial_min, radial_max)
+        subsystem, layer = self.grouping.assign(
+            volume, path, lo, hi, radial_min, radial_max
+        )
         chunk = self._chunk_for(subsystem, layer, vertex_count)
         material = canonical_material(volume.material) or "(none)"
         rgba = base.color_for_material(volume.material)
@@ -593,8 +536,16 @@ def write_chunk(chunk: Chunk, path: Path, instancing: str = "auto") -> int:
     return len(data)
 
 
-def chunk_sort_key(chunk: Chunk) -> tuple[int, str, int]:
-    return SUBSYSTEM_ORDER.get(chunk.subsystem, 99), chunk.layer, chunk.part
+def chunk_sort_key(chunk: Chunk) -> tuple[int, str, str, int]:
+    """Known subsystems first in their fixed order; then every other subsystem
+    by name, each one's layers kept together (sorting by layer alone interleaved
+    custom subsystems that share the same rank)."""
+    return (
+        SUBSYSTEM_ORDER.get(chunk.subsystem, 99),
+        chunk.subsystem,
+        chunk.layer,
+        chunk.part,
+    )
 
 
 def _asset_entry_bytes(asset_dir: Path, name: str, data: bytes) -> dict:
@@ -809,6 +760,7 @@ def write_assets(
             chunkVertices=builder.chunk_vertices,
             instancing=builder.instancing,
             memoryBudgetMiB=builder.memory_budget,
+            grouping=builder.grouping.describe(),
         ),
         "source": builder.source_label(),
         "sourceFile": builder.gdml.name,
@@ -871,6 +823,48 @@ def chunk_path(output: Path, chunk: dict) -> Path:
     return output.parent / unquote(str(chunk.get("url", "")))
 
 
+def _grouping_mismatch(
+    recorded: dict | None, args: argparse.Namespace, explicit: set[str]
+) -> str | None:
+    """Why the grouping the user asked for differs from the one the export was
+    built with, or None. Only options actually passed are compared; an export
+    from before groupings existed counts as the default (cocoa, no rules)."""
+    asked = {"grouping", "group_depth", "grid_cell", "grouping_rules"} & explicit
+    if not asked:
+        return None
+    built = recorded or Grouping().describe()
+    try:
+        wanted = Grouping.from_options(
+            args.grouping, args.group_depth, args.grid_cell, args.grouping_rules
+        ).describe()
+    except GroupingError as error:
+        return f"Invalid grouping: {error}"
+    checks = {
+        "grouping": ("--grouping", "strategy"),
+        "group_depth": ("--group-depth", "groupDepth"),
+        "grid_cell": ("--grid-cell", "gridCell"),
+    }
+    for dest, (flag, key) in checks.items():
+        if dest in asked and wanted[key] != built.get(key):
+            return (
+                f"{flag} {wanted[key]!r} differs from the grouping this viewer was "
+                f"built with ({built.get(key)!r}). Rebuild without --reuse-assets "
+                "to apply it, or drop the option."
+            )
+    if "grouping_rules" in asked:
+        wanted_rules = wanted["rules"]
+        built_rules = built.get("rules")
+        now = wanted_rules.get("sha256") if isinstance(wanted_rules, dict) else None
+        then = built_rules.get("sha256") if isinstance(built_rules, dict) else None
+        if now != then:
+            return (
+                "--grouping-rules differs from the rules this viewer was built "
+                "with (a different file or contents). Rebuild without "
+                "--reuse-assets to apply it, or drop the option."
+            )
+    return None
+
+
 def check_reusable(
     manifest: dict, output: Path, args: argparse.Namespace, explicit: set[str]
 ) -> str | None:
@@ -914,6 +908,9 @@ def check_reusable(
                 f"was built with ({settings.get(key)!r}). Rebuild without "
                 "--reuse-assets to apply it, or drop the option."
             )
+    reason = _grouping_mismatch(settings.get("grouping"), args, explicit)
+    if reason is not None:
+        return reason
     built_with = provenance.get("backend", {}).get("name")
     if "backend" in explicit and args.backend not in ("auto", built_with):
         return (
@@ -1027,6 +1024,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="Store repeated shapes once per chunk and draw them instanced "
         "(auto: only chunks where it saves at least 25%%; always; off: every "
         "placement's triangles are written out)",
+    )
+    parser.add_argument(
+        "--grouping",
+        choices=GROUPING_STRATEGIES,
+        default="cocoa",
+        help="How objects are grouped into subsystems and layers: cocoa (the "
+        "original name and shape heuristics), hierarchy (by placement path, see "
+        "--group-depth), material, spatial (a grid, see --grid-cell) or none",
+    )
+    parser.add_argument(
+        "--group-depth",
+        type=int,
+        default=2,
+        metavar="N",
+        help="With --grouping hierarchy: path levels below the world that form "
+        "the subsystem and layer (1 = subsystem only)",
+    )
+    parser.add_argument(
+        "--grid-cell",
+        type=float,
+        default=500.0,
+        metavar="MM",
+        help="With --grouping spatial: the grid cell size in millimetres",
+    )
+    parser.add_argument(
+        "--grouping-rules",
+        type=Path,
+        default=None,
+        metavar="FILE.json",
+        help="Ordered rules assigning subsystem and layer by fnmatch pattern on "
+        "path, name, volume, material or solid; what no rule matches falls "
+        "through to --grouping",
     )
     parser.add_argument(
         "--memory-budget",
@@ -1202,6 +1231,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 3
             print("pyg4ometry not installed; using pure-Python backend.")
 
+    try:
+        grouping = Grouping.from_options(
+            args.grouping, args.group_depth, args.grid_cell, args.grouping_rules
+        )
+    except GroupingError as error:
+        print(f"Invalid grouping: {error}", file=sys.stderr)
+        return 2
     builder = builder_cls(
         args.gdml,
         quality=args.quality,
@@ -1212,6 +1248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         chunk_vertices=args.chunk_vertices,
         instancing=args.instancing,
         memory_budget=args.memory_budget,
+        grouping=grouping,
     )
     builder.redact_paths = args.redact_paths
     spill_dir = (

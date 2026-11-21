@@ -54,6 +54,14 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Configurable grouping for lazy exports: `--grouping cocoa|hierarchy|material|spatial|none`
+  (default `cocoa`, unchanged), `--group-depth`, `--grid-cell` and
+  `--grouping-rules FILE.json` (ordered rules matching path, name, volume, material
+  or solid by literal or `fnmatch` pattern, never regular expressions). The choice
+  is recorded in the provenance and checked by `--reuse-assets`; the viewer's layer
+  tree follows it. Chunks now sort known subsystems first and every other subsystem
+  by name with its layers together (they used to interleave); the `cocoa` default is
+  unaffected.
 - Export memory: the placement tree and the per-object records are held in
   columns instead of a dict per node and per object, and the lazy exporter writes
   the placements index from them directly. Peak export memory at 100,000
