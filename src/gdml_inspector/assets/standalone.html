@@ -46,6 +46,9 @@ input[type=checkbox] { width: auto; }
 .small-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .camera-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
 .camera-actions button { font-size: 11px; padding: 5px 2px; }
+.camera-actions.two { grid-template-columns: repeat(2, 1fr); margin: 5px 0; }
+#scaleBar { position: absolute; right: 14px; bottom: 14px; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-size: 12px; pointer-events: none; color: var(--text); background: var(--hud); padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; }
+#scaleBarLine { height: 0; border-top: 3px solid var(--text); border-left: 1px solid var(--text); border-right: 1px solid var(--text); box-sizing: content-box; min-width: 2px; }
 .axis-key { display: flex; gap: 10px; margin: 5px 0; font-size: 12px; font-weight: 700; }
 .axis-x { color: #ef4444; } .axis-y { color: #22c55e; } .axis-z { color: #3b82f6; }
 .range-value { flex: 0 0 48px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -79,6 +82,12 @@ input[type=checkbox] { width: auto; }
   <div class="stat"><span>World</span><b id="worldName"></b></div>
   <h2>View</h2>
   <button id="reset">Reset Camera</button>
+  <div class="camera-actions two">
+    <button id="fitAll" title="Frame everything currently shown">Fit all</button>
+    <button id="fitSelection" title="Frame the selected placement" disabled>Fit selection</button>
+  </div>
+  <label class="row"><span>Projection</span>
+    <select id="projection"><option value="perspective">Perspective</option><option value="orthographic">Orthographic</option></select></label>
   <div class="camera-actions">
     <button id="viewXYPos" title="Look toward the origin along -z">XY +Z</button>
     <button id="viewXYNeg" title="Look toward the origin along +z">XY -Z</button>
@@ -117,11 +126,13 @@ input[type=checkbox] { width: auto; }
   <span id="axisLabelX" class="axis-label axis-x">X</span>
   <span id="axisLabelY" class="axis-label axis-y">Y</span>
   <span id="axisLabelZ" class="axis-label axis-z">Z</span>
+  <div id="scaleBar" aria-label="Length scale"><div id="scaleBarLine"></div><span id="scaleBarLabel"></span></div>
   <div id="hud">Drag rotate. Wheel zoom. Shift-drag pan. Click inspect.</div>
 </main>
 </div>
 <script>
 __CLIPPING_JS__
+__CAMERA_JS__
 __PICKING_JS__
 __FILTERS_JS__
 __TREE_JS__
@@ -335,9 +346,7 @@ for (let i = 0; i < ids.length; i++) {
 const idColorBuf = makeBuffer(idColors, gl.STATIC_DRAW);
 
 function pickAt(devX, devY) {
-  const cx = viewCenter[0] + panX, cy = viewCenter[1] + panY, cz = viewCenter[2];
-  const eye = [cx + dist*Math.cos(pitch)*Math.sin(yaw), cy + dist*Math.sin(pitch), cz + dist*Math.cos(pitch)*Math.cos(yaw)];
-  const mvp = mat4mul(perspective(45*Math.PI/180, canvas.width/canvas.height, radius/500, radius*20), lookAt(eye, [cx,cy,cz], cameraUp));
+  const mvp = cameraMvp();
   return picker.pick(devX, devY, {
     width: canvas.width, height: canvas.height, mvp, clip: clipData,
     draw: locs => {
@@ -375,23 +384,9 @@ let cameraUp = [0,1,0];
 // disturbing the global radius used for clipping planes and zoom limits.
 let viewCenter = center.slice();
 
-function mat4mul(a,b) {
-  const o = new Float32Array(16);
-  for (let r=0;r<4;r++) for (let c=0;c<4;c++) for (let k=0;k<4;k++) o[c*4+r] += a[k*4+r]*b[c*4+k];
-  return o;
-}
-function perspective(fovy, aspect, near, far) {
-  const f = 1/Math.tan(fovy/2), nf = 1/(near-far);
-  return new Float32Array([f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0]);
-}
-function lookAt(eye, target, up) {
-  let zx=eye[0]-target[0], zy=eye[1]-target[1], zz=eye[2]-target[2];
-  let zl=Math.hypot(zx,zy,zz); zx/=zl; zy/=zl; zz/=zl;
-  let xx=up[1]*zz-up[2]*zy, xy=up[2]*zx-up[0]*zz, xz=up[0]*zy-up[1]*zx;
-  let xl=Math.hypot(xx,xy,xz); xx/=xl; xy/=xl; xz/=xl;
-  let yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
-  return new Float32Array([xx,yx,zx,0, xy,yy,zy,0, xz,yz,zz,0, -(xx*eye[0]+xy*eye[1]+xz*eye[2]), -(yx*eye[0]+yy*eye[1]+yz*eye[2]), -(zx*eye[0]+zy*eye[1]+zz*eye[2]), 1]);
-}
+let projection = 'perspective'; // or 'orthographic' (see assets/camera.js)
+function cameraState() { return {yaw, pitch, dist, panX, panY, viewCenter, up: cameraUp, projection}; }
+function cameraMvp() { return cameraMatrix(cameraState(), canvas.width/canvas.height, radius/500, radius*20); }
 function resize() {
   const dpr = window.devicePixelRatio || 1;
   const w = Math.floor(canvas.clientWidth*dpr), h = Math.floor(canvas.clientHeight*dpr);
@@ -489,11 +484,7 @@ function render() {
   resize();
   clearCanvas();
   gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.disable(gl.DEPTH_TEST);
-  const cx = viewCenter[0] + panX, cy = viewCenter[1] + panY, cz = viewCenter[2];
-  const eye = [cx + dist*Math.cos(pitch)*Math.sin(yaw), cy + dist*Math.sin(pitch), cz + dist*Math.cos(pitch)*Math.cos(yaw)];
-  const proj = perspective(45*Math.PI/180, canvas.width/canvas.height, radius/500, radius*20);
-  const view = lookAt(eye, [cx,cy,cz], cameraUp);
-  const mvp = mat4mul(proj, view);
+  const mvp = cameraMvp();
   gl.uniformMatrix4fv(uMvp, false, mvp);
   setAttrib(locPos, surfacePosBuf, 3);
   setAttrib(locCol, surfaceColBuf, 4);
@@ -522,6 +513,7 @@ function render() {
     gl.drawArrays(gl.LINES, 0, axisPositions.length/3);
   }
   updateAxisLabels(mvp, axesEnabled);
+  updateScaleBar();
   requestAnimationFrame(render);
 }
 render();
@@ -539,6 +531,9 @@ canvas.addEventListener('wheel', e => { e.preventDefault(); dist = Math.max(radi
 function setCamera(newYaw, newPitch, up) {
   yaw=newYaw; pitch=newPitch; cameraUp=up; viewCenter=center.slice(); dist=radius*1.35; panX=0; panY=0;
 }
+document.getElementById('fitAll').onclick = fitAll;
+document.getElementById('fitSelection').onclick = fitSelection;
+document.getElementById('projection').addEventListener('change', e => { projection = e.target.value; });
 document.getElementById('reset').onclick = () => setCamera(-0.65, 0.45, [0,1,0]);
 document.getElementById('viewXYPos').onclick = () => setCamera(0, 0, [0,1,0]);
 document.getElementById('viewXYNeg').onclick = () => setCamera(Math.PI, 0, [0,1,0]);
@@ -609,6 +604,7 @@ const tree = createHierarchyTree(document.getElementById('hierarchyTree'), {
   decorateRow: visibilityDecorator(() => tree, hierarchyHidden, () => isolatedPath, id => objectVisible[id] === 1),
   afterRefresh: () => {
     document.getElementById('hierarchyClearIsolation').style.display = isolatedPath ? '' : 'none';
+    document.getElementById('fitSelection').disabled = selectedPath === null;
   },
 });
 const nodeByPath = tree.nodeByPath;
@@ -636,13 +632,28 @@ document.getElementById('hierarchyClearIsolation').onclick = () => { isolatedPat
 
 function focusOnPath(path) {
   const box = focusBounds(tree, id => SCENE.objects[id], path);
+  frameBox(box);
+}
+// Aims the camera at `box` (null: the whole scene), keeping its orientation.
+function frameBox(box) {
   if (!box) { viewCenter = center.slice(); dist = radius*1.35; }
   else {
-    viewCenter = [(box[0]+box[3])/2, (box[1]+box[4])/2, (box[2]+box[5])/2];
-    const r = Math.hypot(box[3]-box[0], box[4]-box[1], box[5]-box[2]) || radius*0.05;
-    dist = Math.max(r*1.6, radius*0.02);
+    const fit = fitBox(box, radius*0.02);
+    viewCenter = fit.centre; dist = fit.dist;
   }
   panX = 0; panY = 0;
+}
+// Fit all: the bounds of what is currently shown (filters, hide and isolate
+// applied); with nothing shown, the whole scene, so the view is never empty.
+function fitAll() {
+  const shown = SCENE.objects.filter((_o, i) => objectVisible[i] === 1);
+  frameBox(shown.length ? unionBounds(shown) : null);
+}
+function fitSelection() { if (selectedPath !== null) focusOnPath(selectedPath); }
+function updateScaleBar() {
+  const bar = scaleBarFor(cameraState(), canvas.clientHeight);
+  document.getElementById('scaleBarLine').style.width = bar.px + 'px';
+  document.getElementById('scaleBarLabel').textContent = bar.label + (projection === 'perspective' ? ' (at the target)' : '');
 }
 
 function applyHierarchySearch() { tree.search(document.getElementById('hierarchySearch').value); }
@@ -703,7 +714,7 @@ function captureViewSections() {
   const input = document.getElementById.bind(document);
   return {
     camera: {yaw, pitch, dist, pan: [panX, panY], viewCenter: viewCenter.slice(), up: cameraUp.slice()},
-    projection: {type: 'perspective', fovDeg: 45},
+    projection: {type: projection, fovDeg: CAMERA_FOV_DEG},
     display: {
       opacity: +input('opacity').value,
       wireframe: input('wireframe').checked,
@@ -741,7 +752,11 @@ async function applyViewSections(state, report) {
     viewCenter = c.viewCenter ? c.viewCenter.slice() : center.slice();
     report.applied.push('camera');
   }
-  if (state.projection) report.applied.push('projection');
+  if (state.projection) {
+    projection = state.projection.type;
+    input('projection').value = projection;
+    report.applied.push('projection');
+  }
   if (state.clipping) { setClipState(state.clipping); report.applied.push('clipping'); }
   if (state.filters) {
     report.unknown.push(...filterPanel.set(state.filters));

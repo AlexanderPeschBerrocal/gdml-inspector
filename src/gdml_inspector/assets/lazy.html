@@ -63,6 +63,8 @@ input[type=range] { width: 100%; }
 #filterPanel input:not([type=checkbox]), #filterPanel select { width: 100%; margin: 3px 0; }
 #filterSummary, #filterCounts { margin: 4px 0; }
 .swatch { width: 11px; height: 11px; border-radius: 2px; }
+#scaleBar { position: absolute; right: 14px; bottom: 14px; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-size: 12px; pointer-events: none; color: var(--text); background: var(--hud); padding: 6px 9px; border: 1px solid var(--hud-border); border-radius: 6px; }
+#scaleBarLine { height: 0; border-top: 3px solid var(--text); border-left: 1px solid var(--text); border-right: 1px solid var(--text); box-sizing: content-box; min-width: 2px; }
 #overlay { position: absolute; right: 12px; top: 12px; background: var(--hud); border: 1px solid var(--hud-border); border-radius: 8px; padding: 8px 10px; font-size: 11px; pointer-events: none; }
 #warnings { max-height: 160px; overflow: auto; }
 #compat { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 6px; padding: 8px; margin: 8px 0; font-size: 12px; line-height: 1.4; }
@@ -109,6 +111,11 @@ input[type=range] { width: 100%; }
     <button id="loadAll">Load all</button>
     <button id="hideAll">Hide all</button>
     <button id="resetView">Reset view</button>
+  </div>
+  <div class="row">
+    <button id="fitAll" type="button" title="Frame everything currently shown">Fit all</button>
+    <button id="fitSelection" type="button" title="Frame the selected placement" disabled>Fit selection</button>
+    <select id="projection" title="Projection"><option value="perspective">Perspective</option><option value="orthographic">Orthographic</option></select>
   </div>
   <div class="row">
     <label><input id="releaseHidden" type="checkbox" checked> Unload hidden layers</label>
@@ -181,10 +188,12 @@ input[type=range] { width: 100%; }
   <span id="axisLabelX" class="axis-label axis-x">X</span>
   <span id="axisLabelY" class="axis-label axis-y">Y</span>
   <span id="axisLabelZ" class="axis-label axis-z">Z</span>
+  <div id="scaleBar" aria-label="Length scale"><div id="scaleBarLine"></div><span id="scaleBarLabel"></span></div>
   <div id="overlay">Drag: rotate · Shift+drag: pan · Wheel: zoom</div>
 </main>
 <script>
 __CLIPPING_JS__
+__CAMERA_JS__
 __PICKING_JS__
 __FILTERS_JS__
 __TREE_JS__
@@ -749,14 +758,6 @@ const axisColorBuffer=makeBuffer(axisColors);
 let yaw=-0.65,pitch=0.45,dist=radius*1.35,panX=0,panY=0,renderPending=false;
 let viewCenter=center.slice();
 let cameraUp=[0,1,0];
-function mat4mul(a,b) { const o=new Float32Array(16); for(let r=0;r<4;r++)for(let c=0;c<4;c++)for(let k=0;k<4;k++)o[c*4+r]+=a[k*4+r]*b[c*4+k]; return o; }
-function perspective(fovy,aspect,near,far) { const f=1/Math.tan(fovy/2),nf=1/(near-far); return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*nf,-1,0,0,2*far*near*nf,0]); }
-function lookAt(eye,target,up) {
-  let zx=eye[0]-target[0],zy=eye[1]-target[1],zz=eye[2]-target[2],zl=Math.hypot(zx,zy,zz); zx/=zl;zy/=zl;zz/=zl;
-  let xx=up[1]*zz-up[2]*zy,xy=up[2]*zx-up[0]*zz,xz=up[0]*zy-up[1]*zx,xl=Math.hypot(xx,xy,xz); xx/=xl;xy/=xl;xz/=xl;
-  const yx=zy*xz-zz*xy,yy=zz*xx-zx*xz,yz=zx*xy-zy*xx;
-  return new Float32Array([xx,yx,zx,0,xy,yy,zy,0,xz,yz,zz,0,-(xx*eye[0]+xy*eye[1]+xz*eye[2]),-(yx*eye[0]+yy*eye[1]+yz*eye[2]),-(zx*eye[0]+zy*eye[1]+zz*eye[2]),1]);
-}
 function resize() { const dpr=window.devicePixelRatio||1,w=Math.floor(canvas.clientWidth*dpr),h=Math.floor(canvas.clientHeight*dpr); if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);} }
 function requestRender() { if(renderPending)return; renderPending=true; requestAnimationFrame(render); }
 function updateAxisLabels(mvp,enabled) {
@@ -776,10 +777,13 @@ function updateAxisLabels(mvp,enabled) {
     label.style.top=((-ty/tw*.5+.5)*canvas.clientHeight)+'px';
   }
 }
-function cameraMvp() {
-  const cx=viewCenter[0]+panX,cy=viewCenter[1]+panY,cz=viewCenter[2];
-  const eye=[cx+dist*Math.cos(pitch)*Math.sin(yaw),cy+dist*Math.sin(pitch),cz+dist*Math.cos(pitch)*Math.cos(yaw)];
-  return mat4mul(perspective(45*Math.PI/180,canvas.width/canvas.height,radius/1000,radius*30),lookAt(eye,[cx,cy,cz],cameraUp));
+let projection='perspective'; // or 'orthographic' (see assets/camera.js)
+function cameraState() { return {yaw,pitch,dist,panX,panY,viewCenter,up:cameraUp,projection}; }
+function cameraMvp() { return cameraMatrix(cameraState(),canvas.width/canvas.height,radius/1000,radius*30); }
+function updateScaleBar() {
+  const bar=scaleBarFor(cameraState(),canvas.clientHeight);
+  document.getElementById('scaleBarLine').style.width=bar.px+'px';
+  document.getElementById('scaleBarLabel').textContent=bar.label+(projection==='perspective' ? ' (at the target)' : '');
 }
 function render() {
   renderPending=false; resize();
@@ -827,17 +831,22 @@ function render() {
     gl.drawArrays(gl.LINES,0,6);
   }
   updateAxisLabels(mvp,axesEnabled);
+  updateScaleBar();
+  document.getElementById('fitSelection').disabled=selectedPath===null;
 }
 
 let drag=null;
 canvas.addEventListener('mousedown',e=>drag={x:e.clientX,y:e.clientY,shift:e.shiftKey});
 window.addEventListener('mouseup',()=>drag=null);
 window.addEventListener('mousemove',e=>{ if(!drag)return; const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY; if(drag.shift){panX-=dx*dist/900;panY+=dy*dist/900;}else{yaw+=dx*.006;pitch=Math.max(-1.45,Math.min(1.45,pitch+dy*.006));cameraUp=[0,1,0];} requestRender(); });
-canvas.addEventListener('wheel',e=>{e.preventDefault();dist*=Math.exp(e.deltaY*.001);requestRender();},{passive:false});
+canvas.addEventListener('wheel',e=>{e.preventDefault();dist=Math.max(radius*0.01,Math.min(radius*50,dist*Math.exp(e.deltaY*.001)));requestRender();},{passive:false});
 window.addEventListener('resize',requestRender);
 function setCamera(newYaw,newPitch,up) {
   yaw=newYaw; pitch=newPitch; cameraUp=up; dist=radius*1.35; panX=panY=0; viewCenter=center.slice(); requestRender();
 }
+document.getElementById('fitAll').onclick=fitAll;
+document.getElementById('fitSelection').onclick=fitSelection;
+document.getElementById('projection').addEventListener('change',e=>{projection=e.target.value;requestRender();});
 document.getElementById('resetView').onclick=()=>setCamera(-.65,.45,[0,1,0]);
 document.getElementById('viewXYPos').onclick=()=>setCamera(0,0,[0,1,0]);
 document.getElementById('viewXYNeg').onclick=()=>setCamera(Math.PI,0,[0,1,0]);
@@ -1190,15 +1199,42 @@ async function focusOnPathNow(path) {
   }
   if (!await ensureDetails(ids.map(id => placements.objects[id].chunkIndex))) return;
   const box = focusBounds(tree, id => placements.objects[id], path);
+  frameBox(box);
+}
+// Aims the camera at `box` (null: the whole scene), keeping its orientation.
+function frameBox(box) {
   if (!box) { viewCenter = center.slice(); dist = radius * 1.35; }
   else {
-    viewCenter = [(box[0] + box[3]) / 2, (box[1] + box[4]) / 2, (box[2] + box[5]) / 2];
-    const r = Math.hypot(box[3] - box[0], box[4] - box[1], box[5] - box[2]) || radius * 0.05;
-    dist = Math.max(r * 1.6, radius * 0.02);
+    const fit = fitBox(box, radius * 0.02);
+    viewCenter = fit.centre; dist = fit.dist;
   }
   panX = 0; panY = 0;
   requestRender();
 }
+// Fit all: the bounds of what is currently shown (filters, hide and isolate
+// applied, only loaded layers have geometry); with nothing shown, the whole
+// scene, so the view is never empty. Per-object boxes come from the chunks'
+// detail shards; with nothing narrowed, the loaded chunks' own boxes suffice.
+let fitInFlight = 0;
+async function fitAll() {
+  fitInFlight++;
+  try {
+    const shown = MANIFEST.chunks.filter(c => states[c.key].loaded && states[c.key].visible);
+    let box = null;
+    const narrowed = visibleMask && visibleMask.some(v => !v);
+    if (narrowed && placements) {
+      const ids = [];
+      placements.objects.forEach((o, id) => { if (visibleMask[id] && shown.some(c => c.baseKey === o.chunk)) ids.push(id); });
+      if (ids.length && await ensureDetails(ids.map(id => placements.objects[id].chunkIndex))) {
+        box = unionBounds(ids.map(id => placements.objects[id]));
+      }
+    } else if (shown.length) {
+      box = unionBounds(shown.map(c => ({bbox: c.bbox})));
+    }
+    frameBox(box);
+  } finally { fitInFlight--; }
+}
+function fitSelection() { if (selectedPath !== null) focusOnPath(selectedPath); }
 
 function pickAt(devX, devY) {
   resize();
@@ -1254,7 +1290,7 @@ buildTree(); updateStats(); requestRender();
 function captureViewSections() {
   return {
     camera: {yaw, pitch, dist, pan: [panX, panY], viewCenter: viewCenter.slice(), up: cameraUp.slice()},
-    projection: {type: 'perspective', fovDeg: 45},
+    projection: {type: projection, fovDeg: CAMERA_FOV_DEG},
     display: {
       opacity: +document.getElementById('opacity').value,
       axes: document.getElementById('coordinateAxes').checked,
@@ -1298,7 +1334,11 @@ async function applyViewSections(state, report) {
     viewCenter = c.viewCenter ? c.viewCenter.slice() : center.slice();
     report.applied.push('camera');
   }
-  if (state.projection) report.applied.push('projection');
+  if (state.projection) {
+    projection = state.projection.type;
+    input('projection').value = projection;
+    report.applied.push('projection');
+  }
   if (state.clipping) { setClipState(state.clipping); report.applied.push('clipping'); }
   if (state.filters) {
     report.unknown.push(...filterPanel.set(state.filters));

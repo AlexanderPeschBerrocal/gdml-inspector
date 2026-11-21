@@ -43,7 +43,8 @@ uv run --no-sync pytest tests/test_*browser*.py \
 - **What is covered:** both programs' shaders link with no GL error; the
   camera presets, opacity, wireframe, axes, dark-mode, clipping, material and
   hierarchy/picking/diagnostics controls (standalone); lazy picking
-  (`test_grouping.py` / `test_grouping_browser.py` cover each strategy, rule
+  (`test_camera_browser.py` runs the same projection, scale-bar, fit and reset
+  checks against both viewers; `test_grouping.py` / `test_grouping_browser.py` cover each strategy, rule
   matching and validation, reuse checks, hash-seed independence and the viewer's
   layer tree; `test_spill.py` checks spilled output is byte-identical to the in-memory export,
   that only open parts hold arrays, the budget's bound, reuse and cleanup;

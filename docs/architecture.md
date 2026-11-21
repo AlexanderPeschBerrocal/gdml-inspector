@@ -44,6 +44,9 @@ keeps both descriptions of each chunk until the part is closed (full, or release
 early by `--memory-budget`), when its bytes are written to a spill directory and
 its arrays freed.
 
+The camera maths shared by both viewers (matrices, perspective or orthographic
+projection, the scale bar and the fit rule) is `camera.js`.
+
 Which subsystem and layer (chunk) an object belongs to is decided by a
 `Grouping` (`grouping.py`): a strategy (`cocoa`, `hierarchy`, `material`,
 `spatial`, `none`) plus optional ordered rules from a JSON file. The builder asks

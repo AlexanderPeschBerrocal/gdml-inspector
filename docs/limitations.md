@@ -382,10 +382,31 @@ hidden".
   extra geometry, and clipping, hiding, instancing and highlight apply to the
   lines automatically. Line weight and tint are close but not pixel-identical
   between the viewers.
-- Not done yet (issue #6): orthographic projection, a length scale bar, a
-  fit-to-selection/fit-all reset that survives an empty filter, screenshot export,
-  per-selection opacity or colours, and a documented transparency-ordering
-  technique.
+- **Projection** (both viewers, `camera.js`): perspective (45 degree field of
+  view) or orthographic. Switching never moves the eye: the orthographic view is
+  sized so the plane through the camera target shows exactly what the perspective
+  one does there, so axis views keep their orientation (looking down -z, +x is to
+  the right and +y up, in both projections), picking uses the same matrix, and a
+  point on the target plane stays on the same pixel. Saved views record the
+  projection (`perspective` or `orthographic`), also across viewers.
+- **Scale bar** (bottom right of the canvas): a 1-2-5 length in mm, um or m,
+  roughly 70 to 180 pixels wide, recomputed every frame from the camera and
+  the canvas height (CSS pixels). In an orthographic view it is exact everywhere;
+  in a perspective view it is exact only on the plane through the target and is
+  labelled "(at the target)", since nearer and farther geometry has another scale.
+- **Fit all / Fit selection / Reset.** *Fit all* frames the bounds of what is
+  currently shown (filters, hide and isolate applied; in the lazy viewer, loaded
+  layers) and, with nothing shown, the whole scene so the view is never empty.
+  *Fit selection* (disabled until something is selected) frames the selected
+  placement's subtree; the hierarchy's Focus and the inspector's Focus use the same
+  rule (1.6 times the box diagonal). *Reset camera* returns to the default
+  orientation, centre and distance whatever pan or zoom came before; wheel zoom is
+  limited to 0.01 to 50 times the scene radius in both viewers. In the lazy viewer
+  fit-all after narrowing fetches the bounding-box shards it needs.
+- Not done yet (issue #6): screenshot export, per-selection opacity or colours,
+  a documented transparency-ordering technique (the standalone viewer draws with
+  blending and no depth test), configurable background and a way to tell real
+  solid edges from triangle diagonals.
 
 ## Rendering and size limits
 
