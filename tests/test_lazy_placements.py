@@ -371,3 +371,48 @@ def test_the_index_and_shards_never_contain_an_absolute_path(lazy_export):
             str(source.parent)
             not in (output.parent / _decoded(asset["url"])).read_text()
         )
+
+
+def test_objects_map_to_the_right_chunk_when_layers_are_met_out_of_sorted_order(
+    tmp_path, write_gdml
+):
+    # "plate" (subsystem Other) is placed before "ecal1" (ECAL), but the manifest
+    # sorts ECAL first, so a chunk's creation order is not its manifest index.
+    path = write_gdml(
+        solids='<box name="shape" x="2" y="4" z="6" lunit="mm"/>',
+        structure="""
+<volume name="plate_vol"><materialref ref="G4_Fe"/><solidref ref="shape"/></volume>
+<volume name="ecal1_vol"><materialref ref="G4_Fe"/><solidref ref="shape"/></volume>
+<volume name="world"><materialref ref="Galactic"/><solidref ref="world_box"/>
+  <physvol name="first"><volumeref ref="plate_vol"/></physvol>
+  <physvol name="second"><volumeref ref="ecal1_vol"/>
+    <position x="10" unit="mm"/></physvol>
+  <physvol name="third"><volumeref ref="plate_vol"/>
+    <position x="20" unit="mm"/></physvol>
+</volume>""",
+    )
+    output = tmp_path / "v.html"
+    assert (
+        cli.main(
+            ["--lazy", str(path), *BUILD, "--instancing", "off", "--out", str(output)]
+        )
+        == 0
+    )
+    manifest = lazy.read_existing_manifest(output)
+    placements = expand_placements(output, manifest)
+    assert [c["subsystem"] for c in manifest["chunks"]] == ["ECAL", "Other"]
+    # Object 0 ("first") was created in the Other chunk, which is manifest index 1.
+    assert placements["objects"][0]["chunkIndex"] == 1
+    assert placements["objects"][1]["chunkIndex"] == 0
+    for index, chunk in enumerate(manifest["chunks"]):
+        binary = (output.parent / _decoded(chunk["url"])).read_bytes()
+        count, id_start = (
+            struct.unpack_from("<I", binary, 12)[0],
+            struct.unpack_from("<I", binary, 24)[0],
+        )
+        in_chunk = {v - 1 for v in struct.unpack_from(f"<{count}I", binary, id_start)}
+        shard = read_json(output, manifest["placements"]["shards"][index])
+        assert set(shard["objects"]) == in_chunk
+        assert {
+            o["id"] for o in placements["objects"] if o["chunkIndex"] == index
+        } == in_chunk

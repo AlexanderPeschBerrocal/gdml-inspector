@@ -492,12 +492,14 @@ def solid_params(el: ET.Element) -> dict[str, float]:
     while a tube also yields rmin/rmax/startphi/deltaphi, and a Boolean
     solid (no numeric attributes of its own) yields an empty dict."""
     attrs = el.attrib
-    params = {
-        key: length(attrs, key) for key in _SOLID_LENGTH_PARAM_KEYS if key in attrs
-    }
-    params.update(
-        {key: angle(attrs, key) for key in _SOLID_ANGLE_PARAM_KEYS if key in attrs}
-    )
+    # In the order the GDML file declares them: iterating the key *sets* made
+    # the order (and so the exported bytes) depend on the process's hash seed.
+    params: dict[str, float] = {}
+    for key in attrs:
+        if key in _SOLID_LENGTH_PARAM_KEYS:
+            params[key] = length(attrs, key)
+        elif key in _SOLID_ANGLE_PARAM_KEYS:
+            params[key] = angle(attrs, key)
     return params
 
 

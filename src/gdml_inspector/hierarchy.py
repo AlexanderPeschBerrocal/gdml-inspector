@@ -4,6 +4,7 @@ asset, so both describe the same hierarchy identically."""
 
 from __future__ import annotations
 
+from array import array
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
@@ -37,8 +38,102 @@ class HierarchyNodeDict(TypedDict):
 
 def _flatten_matrix(matrix: base.Mat4) -> list[float]:
     """The same 3x4 row-major flattening diff.py's own ObjectDict["matrix"]
-    already uses, dropping the always-implicit [0, 0, 0, 1] fourth row."""
-    return [v for row in matrix[:3] for v in row]
+    already uses, dropping the always-implicit [0, 0, 0, 1] fourth row. Always
+    floats, so a transform reads the same whichever way it was stored."""
+    return [float(v) for row in matrix[:3] for v in row]
+
+
+_ZERO_MATRIX = array("d", [0.0] * 12)
+RENDERED, ASSEMBLY, HAS_LOCAL, HAS_GLOBAL = 1, 2, 4, 8
+
+
+class HierarchyColumns:
+    """The placement tree as parallel columns instead of one dict per node.
+
+    A node costs a path string (shared with the traversal's own), a parent
+    index, a volume-name reference, a flag byte, an object id and two 3x4
+    matrices in flat arrays: a few hundred bytes where a dict of dicts and lists
+    cost about 1.4 KB. Nodes are numbered in creation (pre-)order, so a parent's
+    index is always below its children's. ``materialize()`` rebuilds the
+    HierarchyNodeDict records on demand (the single-file viewer's embed and the
+    tests); the lazy exporter reads the columns directly."""
+
+    def __init__(self) -> None:
+        self.paths: list[str] = []
+        self.index: dict[str, int] = {}
+        self.parent = array("i")
+        self.volume: list[str | None] = []  # None: never traversed, so the name
+        self.flags = bytearray()
+        self.object_id = array("i")
+        self.local = array("d")
+        self.global_ = array("d")
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    def node(self, path: str) -> int:
+        existing = self.index.get(path)
+        if existing is not None:
+            return existing
+        i = len(self.paths)
+        self.paths.append(path)
+        self.index[path] = i
+        self.parent.append(-1)
+        self.volume.append(None)
+        self.flags.append(0)
+        self.object_id.append(-1)
+        self.local.extend(_ZERO_MATRIX)
+        self.global_.extend(_ZERO_MATRIX)
+        return i
+
+    def name(self, i: int) -> str:
+        return self.paths[i].rsplit("/", 1)[-1]
+
+    def segment(self, i: int) -> str:
+        """The path below the parent (the whole path for the root)."""
+        parent = self.parent[i]
+        return (
+            self.paths[i]
+            if parent < 0
+            else self.paths[i][len(self.paths[parent]) + 1 :]
+        )
+
+    def volume_name(self, i: int) -> str:
+        return self.volume[i] or self.name(i)
+
+    def set_matrix(self, target: array, i: int, matrix: base.Mat4) -> None:
+        target[i * 12 : i * 12 + 12] = array(
+            "d", [float(v) for row in matrix[:3] for v in row]
+        )
+
+    def matrix(self, source: array, i: int) -> list[float]:
+        return list(source[i * 12 : i * 12 + 12])
+
+    def materialize(self) -> list[HierarchyNodeDict]:
+        nodes: list[HierarchyNodeDict] = []
+        for i, path in enumerate(self.paths):
+            name = self.name(i)
+            volume = self.volume_name(i)
+            parent = self.parent[i]
+            flags = self.flags[i]
+            node: HierarchyNodeDict = {
+                "path": path,
+                "parentPath": None if parent < 0 else self.paths[parent],
+                "name": name,
+                "semanticName": semantic_name(name),
+                "volume": volume,
+                "semanticVolume": semantic_name(volume),
+                "isAssembly": bool(flags & ASSEMBLY),
+                "rendered": bool(flags & RENDERED),
+            }
+            if flags & HAS_LOCAL:
+                node["localMatrix"] = self.matrix(self.local, i)
+            if self.object_id[i] >= 0:
+                node["objectId"] = self.object_id[i]
+            if flags & HAS_GLOBAL:
+                node["globalMatrix"] = self.matrix(self.global_, i)
+            nodes.append(node)
+        return nodes
 
 
 class HierarchyMixin(base.GDMLSceneBuilder):
@@ -64,55 +159,41 @@ class HierarchyMixin(base.GDMLSceneBuilder):
         super().__init__(
             gdml, quality, include_containers, include_world, max_objects, max_vertices
         )
-        self._hierarchy: dict[str, HierarchyNodeDict] = {}
-
-    def _hierarchy_node(self, path: str) -> HierarchyNodeDict:
-        existing = self._hierarchy.get(path)
-        if existing is not None:
-            return existing
-        name = path.rsplit("/", 1)[-1]
-        node: HierarchyNodeDict = {
-            "path": path,
-            "parentPath": None,
-            "name": name,
-            "semanticName": semantic_name(name),
-            "volume": name,
-            "semanticVolume": semantic_name(name),
-            "isAssembly": False,
-            "rendered": False,
-        }
-        self._hierarchy[path] = node
-        return node
+        self.hierarchy = HierarchyColumns()
 
     def _on_placement(
         self, path: str, parent_path: str, local_matrix: base.Mat4, is_assembly: bool
     ) -> None:
         super()._on_placement(path, parent_path, local_matrix, is_assembly)
-        node = self._hierarchy_node(path)
-        node["parentPath"] = parent_path
-        node["isAssembly"] = is_assembly
-        node["localMatrix"] = _flatten_matrix(local_matrix)
+        h = self.hierarchy
+        i = h.node(path)
+        h.parent[i] = h.node(parent_path)
+        h.flags[i] = (h.flags[i] & ~ASSEMBLY) | (ASSEMBLY if is_assembly else 0)
+        h.set_matrix(h.local, i, local_matrix)
+        h.flags[i] |= HAS_LOCAL
 
     def _on_volume(self, path: str, volume: base.VolumeDef, render: bool) -> None:
         super()._on_volume(path, volume, render)
-        node = self._hierarchy_node(path)
-        node["volume"] = volume.name
-        node["semanticVolume"] = semantic_name(volume.name)
-        node["rendered"] = render
+        h = self.hierarchy
+        i = h.node(path)
+        h.volume[i] = volume.name
+        h.flags[i] = (h.flags[i] & ~RENDERED) | (RENDERED if render else 0)
 
     def _on_object_added(
         self, path: str, volume: base.VolumeDef, matrix: base.Mat4, object_id: int
     ) -> None:
         super()._on_object_added(path, volume, matrix, object_id)
-        node = self._hierarchy_node(path)
-        node["objectId"] = object_id
-        node["globalMatrix"] = _flatten_matrix(matrix)
+        h = self.hierarchy
+        i = h.node(path)
+        h.object_id[i] = object_id
+        h.set_matrix(h.global_, i, matrix)
+        h.flags[i] |= HAS_GLOBAL
 
     def hierarchy_nodes(self) -> list[HierarchyNodeDict]:
-        """The tree as a flat, pre-order list (dicts preserve insertion
-        order, and nodes are inserted exactly in traversal order); each
-        rendered node already carries its objectId and global matrix."""
-        return list(self._hierarchy.values())
+        """The tree as a flat, pre-order list; each rendered node already
+        carries its objectId and global matrix. Built on demand from the
+        columns (the lazy exporter reads ``self.hierarchy`` directly)."""
+        return self.hierarchy.materialize()
 
     def solids_table(self) -> dict[str, SolidInfo]:
         """Each parsed solid's kind and own declared parameters, keyed by

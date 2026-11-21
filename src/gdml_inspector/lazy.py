@@ -16,7 +16,7 @@ import tempfile
 import zipfile
 from array import array
 from collections import Counter, OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote, unquote
@@ -24,7 +24,15 @@ from urllib.parse import quote, unquote
 from . import __version__
 from . import geometry as base
 from ._assets import read_asset, render_template
-from .hierarchy import HierarchyMixin, HierarchyNodeDict
+from .hierarchy import (
+    ASSEMBLY,
+    HAS_GLOBAL,
+    HAS_LOCAL,
+    RENDERED,
+    HierarchyColumns,
+    HierarchyMixin,
+    HierarchyNodeDict,
+)
 from .pyg4ometry_backend import Pyg4ometrySceneBuilder
 from .server import serve_file
 from .viewstate import load_view_state, stale_warning
@@ -153,6 +161,44 @@ def classify_chunk(
 
 
 @dataclass
+class ObjectColumns:
+    """What the placements asset needs to know about each accepted object, as
+    columns (id == position): its path, material, solid and solid type (shared
+    string references), tessellated bounds in one flat array and the chunk part
+    that holds it. A dict per object cost about 0.9 KB; this costs roughly 100
+    bytes."""
+
+    def __init__(self) -> None:
+        self.paths: list[str] = []
+        self.material: list[str] = []
+        self.solid: list[str] = []
+        self.solid_type: list[str] = []
+        self.bbox = array("d")
+        self.chunk = array("i")  # position in LazyBuilderMixin.chunk_keys
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    def append(
+        self,
+        path: str,
+        material: str,
+        solid: str,
+        solid_type: str,
+        lo: Sequence[float],
+        hi: Sequence[float],
+        chunk: int,
+    ) -> None:
+        self.paths.append(path)
+        self.material.append(material)
+        self.solid.append(solid)
+        self.solid_type.append(solid_type)
+        self.bbox.extend(lo)
+        self.bbox.extend(hi)
+        self.chunk.append(chunk)
+
+
+@dataclass
 class FrozenChunk:
     """What is kept of a chunk part once it has been written to disk and its
     arrays released: enough to describe it in the manifest."""
@@ -230,6 +276,7 @@ class LazyBuilderMixin:
     provenance: Callable[..., dict[str, object]]
     source_label: Callable[[], str]
     solids_table: Callable[[], dict[str, base.SolidInfo]]
+    hierarchy: HierarchyColumns
     hierarchy_nodes: Callable[[], list[HierarchyNodeDict]]
     _on_object_added: Callable[..., None]
     _admit_object: Callable[[str, int, int, int], bool]
@@ -258,10 +305,12 @@ class LazyBuilderMixin:
         self.total_vertices = 0
         self.total_objects = 0
         self.material_counts: Counter[str] = Counter()
-        # One record per accepted object, in id order (id == index): what the
-        # placements asset publishes so a viewer knows every object, loaded or
-        # not, without fetching geometry.
-        self.object_table: list[dict[str, object]] = []
+        # One entry per accepted object, in id order: what the placements asset
+        # publishes so a viewer knows every object, loaded or not, without
+        # fetching geometry.
+        self.objects = ObjectColumns()
+        self.chunk_keys: list[str] = []  # chunk part keys by creation order
+        self._chunk_ids: dict[str, int] = {}
         self.global_bbox_min = [float("inf")] * 3
         self.global_bbox_max = [float("-inf")] * 3
 
@@ -280,6 +329,8 @@ class LazyBuilderMixin:
         part = len(keys) + 1
         chunk = Chunk(subsystem=subsystem, layer=layer, part=part)
         self.chunks[chunk.key] = chunk
+        self._chunk_ids[chunk.key] = len(self.chunk_keys)
+        self.chunk_keys.append(chunk.key)
         keys.append(chunk.key)
         return chunk
 
@@ -379,8 +430,15 @@ class LazyBuilderMixin:
         self.material_counts[material] += 1
         self.total_vertices += vertex_count
         self.total_objects += 1
-        record = base.object_record(object_id, volume, path, solid_type, lo, hi)
-        self.object_table.append({**record, "chunk": chunk.key})
+        self.objects.append(
+            path,
+            volume.material or "(none)",
+            volume.solid,
+            solid_type,
+            lo,
+            hi,
+            self._chunk_ids[chunk.key],
+        )
         self._on_object_added(path, volume, matrix, object_id)
         self._enforce_memory_budget()
 
@@ -539,14 +597,27 @@ def chunk_sort_key(chunk: Chunk) -> tuple[int, str, int]:
     return SUBSYSTEM_ORDER.get(chunk.subsystem, 99), chunk.layer, chunk.part
 
 
-def _asset_entry(asset_dir: Path, name: str, document: object) -> dict:
-    data = json.dumps(document, separators=(",", ":")).encode("utf-8")
+def _asset_entry_bytes(asset_dir: Path, name: str, data: bytes) -> dict:
     (asset_dir / name).write_bytes(data)
     return {
         "url": quote(f"{asset_dir.name}/{name}"),
         "sha256": hashlib.sha256(data).hexdigest(),
         "bytes": len(data),
     }
+
+
+def _asset_entry(asset_dir: Path, name: str, document: object) -> dict:
+    data = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    return _asset_entry_bytes(asset_dir, name, data)
+
+
+def _json(value: object) -> str:
+    return json.dumps(value, separators=(",", ":"))
+
+
+def _ints(values: Iterable[int]) -> str:
+    """A JSON array of integers without building a list of int objects."""
+    return "[" + ",".join(map(str, values)) + "]"
 
 
 def write_placements(
@@ -561,105 +632,102 @@ def write_placements(
     volume, material, solid, owning chunk). Repeated strings live once in a
     shared table. *Shards*: per chunk, the details only an inspector or a
     "focus" needs (bounding boxes, local and global transforms), plus one for
-    the non-rendered containers. Their digests are in the manifest."""
-    nodes = builder.hierarchy_nodes()
-    node_index = {node["path"]: i for i, node in enumerate(nodes)}
+    the non-rendered containers. Their digests are in the manifest.
+
+    Reads the builder's columns directly and writes the index as text, so no
+    per-placement dict or list is built."""
+    h = builder.hierarchy
+    objects = builder.objects
     strings: dict[str, int] = {}
 
     def intern(text: str) -> int:
         return strings.setdefault(text, len(strings))
 
-    columns: dict[str, list] = {
-        "name": [],  # the path below the parent (the whole path for the root)
-        "parent": [],
-        "semName": [],  # string index, or -1 when the same as the last segment
-        "volume": [],
-        "semVolume": [],
-        "flags": [],  # 1 rendered, 2 assembly
-        "object": [],
-    }
-    for node in nodes:
-        parent = node["parentPath"]
-        path = node["path"]
-        if parent is None:
-            columns["parent"].append(-1)
-            columns["name"].append(path)
-        else:
-            assert path.startswith(parent + "/")
-            columns["parent"].append(node_index[parent])
-            columns["name"].append(path[len(parent) + 1 :])
-        last = path.rsplit("/", 1)[-1]
-        columns["semName"].append(
-            -1 if node["semanticName"] == last else intern(node["semanticName"])
-        )
-        columns["volume"].append(intern(node["volume"]))
-        columns["semVolume"].append(intern(node["semanticVolume"]))
-        columns["flags"].append(
-            (1 if node["rendered"] else 0) | (2 if node["isAssembly"] else 0)
-        )
-        columns["object"].append(node.get("objectId", -1))
+    names: list[str] = []  # the path below the parent (the whole path for the root)
+    sem_names = array("i")  # string index, or -1 when the same as the last segment
+    volumes = array("i")
+    sem_volumes = array("i")
+    flags = array("i")  # 1 rendered, 2 assembly
+    for i in range(len(h)):
+        names.append(h.segment(i))
+        name = h.name(i)
+        semantic = base.semantic_name(name)
+        sem_names.append(-1 if semantic == name else intern(semantic))
+        volume = h.volume_name(i)
+        volumes.append(intern(volume))
+        sem_volumes.append(intern(base.semantic_name(volume)))
+        flags.append(h.flags[i] & (RENDERED | ASSEMBLY))
 
-    object_columns: dict[str, list] = {
-        "node": [],
-        "material": [],
-        "solid": [],
-        "solidType": [],
-        "chunk": [],
-    }
-    by_chunk: dict[int, list[dict]] = {}
-    for record in builder.object_table:
-        index = chunk_index[str(record["chunk"])]
-        object_columns["node"].append(node_index[str(record["path"])])
-        object_columns["material"].append(intern(str(record["material"])))
-        object_columns["solid"].append(intern(str(record["solid"])))
-        object_columns["solidType"].append(intern(str(record["solidType"])))
-        object_columns["chunk"].append(index)
-        by_chunk.setdefault(index, []).append(record)
+    remap = [chunk_index[key] for key in builder.chunk_keys]
+    object_node = array("i")
+    material = array("i")
+    solid = array("i")
+    solid_type = array("i")
+    object_chunk = array("i")
+    by_chunk: list[array] = [array("I") for _ in range(len(chunk_index))]
+    for j in range(len(objects)):
+        index = remap[objects.chunk[j]]
+        object_node.append(h.index[objects.paths[j]])
+        material.append(intern(objects.material[j]))
+        solid.append(intern(objects.solid[j]))
+        solid_type.append(intern(objects.solid_type[j]))
+        object_chunk.append(index)
+        by_chunk[index].append(j)
 
     shards: list[dict] = []
     for index in range(len(chunk_index)):
-        records = by_chunk.get(index, [])
-        members = [nodes[node_index[str(r["path"])]] for r in records]
+        ids = by_chunk[index]
+        members = [object_node[j] for j in ids]
         shards.append(
             _asset_entry(
                 asset_dir,
                 SHARD_NAME.format(index=index),
                 {
-                    "objects": [r["id"] for r in records],
-                    "bbox": [r["bbox"] for r in records],
-                    "nodes": [node_index[str(r["path"])] for r in records],
-                    "local": [m.get("localMatrix") for m in members],
-                    "global": [m.get("globalMatrix") for m in members],
+                    "objects": list(ids),
+                    "bbox": [list(objects.bbox[j * 6 : j * 6 + 6]) for j in ids],
+                    "nodes": members,
+                    "local": [
+                        h.matrix(h.local, n) if h.flags[n] & HAS_LOCAL else None
+                        for n in members
+                    ],
+                    "global": [
+                        h.matrix(h.global_, n) if h.flags[n] & HAS_GLOBAL else None
+                        for n in members
+                    ],
                 },
             )
         )
-    containers = [i for i, node in enumerate(nodes) if "objectId" not in node]
+    containers = [i for i in range(len(h)) if h.object_id[i] < 0]
     containers_entry = _asset_entry(
         asset_dir,
         CONTAINERS_SHARD_NAME,
         {
             "nodes": containers,
-            "local": [nodes[i].get("localMatrix") for i in containers],
+            "local": [
+                h.matrix(h.local, i) if h.flags[i] & HAS_LOCAL else None
+                for i in containers
+            ],
         },
     )
 
-    index_entry = _asset_entry(
-        asset_dir,
-        PLACEMENTS_NAME,
-        {
-            "format": PLACEMENTS_FORMAT,
-            "schemaVersion": base.SCHEMA_VERSION,
-            "strings": list(strings),
-            "nodes": columns,
-            "objects": object_columns,
-            "solids": builder.solids_table(),
-        },
+    text = (
+        f'{{"format":{PLACEMENTS_FORMAT},"schemaVersion":{base.SCHEMA_VERSION},'
+        f'"strings":{_json(list(strings))},'
+        f'"nodes":{{"name":{_json(names)},"parent":{_ints(h.parent)},'
+        f'"semName":{_ints(sem_names)},"volume":{_ints(volumes)},'
+        f'"semVolume":{_ints(sem_volumes)},"flags":{_ints(flags)},'
+        f'"object":{_ints(h.object_id)}}},'
+        f'"objects":{{"node":{_ints(object_node)},"material":{_ints(material)},'
+        f'"solid":{_ints(solid)},"solidType":{_ints(solid_type)},'
+        f'"chunk":{_ints(object_chunk)}}},'
+        f'"solids":{_json(builder.solids_table())}}}'
     )
+    index_entry = _asset_entry_bytes(asset_dir, PLACEMENTS_NAME, text.encode("utf-8"))
     return {
         **index_entry,
         "format": PLACEMENTS_FORMAT,
-        "nodes": len(nodes),
-        "objects": len(builder.object_table),
+        "nodes": len(h),
+        "objects": len(objects),
         "shards": shards,
         "containers": containers_entry,
     }
@@ -754,9 +822,7 @@ def write_assets(
         "chunks": chunk_entries,
         "materials": dict(sorted(builder.material_counts.items())),
         "materialColors": material_colors,
-        "solidTypes": dict(
-            sorted(Counter(str(o["solidType"]) for o in builder.object_table).items())
-        ),
+        "solidTypes": dict(sorted(Counter(builder.objects.solid_type).items())),
         "warnings": base.format_warnings(builder.scene.diagnostics),
         "diagnostics": base.diagnostics_list(builder.scene.diagnostics),
         "diagnosticSummary": base.diagnostics_summary(builder.scene.diagnostics),

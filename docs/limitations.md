@@ -403,10 +403,17 @@ API):**
   (never what is drawn, the ids, or the metadata), so it is recorded in the
   provenance and checked by `--reuse-assets`. `0` means unlimited.
 - The budget counts only chunk geometry arrays, at 20 bytes per vertex plus
-  56 per object. It does **not** bound the per-placement Python metadata (the
-  hierarchy and object records, about 2.5 KB per placement, plus the parsed GDML
-  tree), which is what dominates large exports (see `docs/benchmarks.md`).
-  Compacting that metadata is not done.
+  56 per object. Per-placement bookkeeping is outside it: the placement tree and
+  the object records are held in columns (about 0.3 KB per placement in all, where
+  a dict per node and per object cost about 2.3 KB), and the parsed GDML tree is
+  the largest remaining cost (about 1.4 KB per placement, see
+  `docs/benchmarks.md`). Memory therefore still grows linearly with placements,
+  just at roughly a third of the earlier rate.
+- `HierarchyMixin.hierarchy_nodes()` (the standalone viewer's embed and the tests)
+  builds the per-node dicts on demand from the columns; the lazy exporter reads the
+  columns directly and never builds them. Matrices are stored as floats, so a
+  transform that used to print as `1` (only the world volume's global matrix
+  with `--include-world`) now prints as `1.0`; the values are equal.
 - Spill files live in `<stem>.assets/.spill/` and are removed when the export
   ends, whether it succeeds or fails; `--validate-only` writes nothing.
 
