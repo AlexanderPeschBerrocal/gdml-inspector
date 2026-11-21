@@ -54,6 +54,18 @@ process (issue #22) this now builds on top of this policy.
 
 ### Added
 
+- Export memory: the placement tree and the per-object records are held in
+  columns instead of a dict per node and per object, and the lazy exporter writes
+  the placements index from them directly. Peak export memory at 100,000
+  placements fell from 482 to 279 MiB (one layer) and from 708 to 415 MiB (many
+  layers); export time and the output bytes are unchanged (except that
+  integer-valued matrix entries now print as floats, e.g. `1.0`, in the world
+  volume's global matrix with `--include-world`).
+- Fixed: exports were not reproducible across processes: a solid's declared
+  parameters were listed in set-iteration order, which depends on the process's
+  hash seed, so the same input could produce different bytes in two runs. They now
+  follow the GDML file's attribute order, and a test runs the export under
+  different `PYTHONHASHSEED` values.
 - Lazy export memory: chunk parts that are full are written to disk while the
   scene is still being built and their arrays released, so memory holds only the
   parts still being filled; the output is byte-for-byte unchanged. New

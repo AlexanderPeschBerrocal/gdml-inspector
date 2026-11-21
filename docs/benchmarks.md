@@ -114,11 +114,29 @@ of the export process (single runs, same machine):
 | one layer (`large-one-layer`) | 679 MiB | 482 MiB | parts spill as they fill; time 23.9 s to 23.3 s |
 | many small layers (`large`) | 708 MiB | 555 MiB | needs `--memory-budget 64`; the default 512 MiB is not reached |
 
-Spilling bounds the chunk *geometry*; the rest (about 2.5 KB of Python
+Spilling bounds the chunk *geometry*; the rest (about 2.3 KB of Python
 hierarchy and object records per placement, plus the parsed GDML tree, roughly
-400 MiB of the 482) is untouched and is now what grows with the scene. A profile at
-20,000 placements: chunk arrays 42 MiB, object table 19 MiB, hierarchy 30 MiB.
-Compacting those records is the next memory lever.
+400 MiB of the 482) was untouched. A profile at 100,000 placements before
+compacting: parsed GDML tree 141 MiB, hierarchy 142 MiB, object table 91 MiB, chunk
+arrays 211 MiB.
+
+### Effect of compacting the per-placement records
+
+The hierarchy and the object table moved from a dict per node and per object to
+columns (arrays plus shared string references); the lazy exporter reads them
+directly. Same scenes and settings (peak RSS, single runs):
+
+| scene | after spilling | after compacting |
+| --- | ---: | ---: |
+| one layer, 100,000 placements | 482 MiB | 279 MiB |
+| many layers, `--memory-budget 64` | 555 MiB | 335 MiB |
+| many layers, default budget | 708 MiB (no spill) | 415 MiB |
+
+Export CPU time was unchanged (22.0 s against 22.4 s of user time on the one-layer
+scene); wall times in this run are not comparable with the earlier ones because the
+output went to a network disk. The parsed GDML tree (about 1.4 KB per placement) is
+now the largest single cost; replacing ElementTree with a streaming parse is not
+done.
 
 ### What the baseline shows
 
