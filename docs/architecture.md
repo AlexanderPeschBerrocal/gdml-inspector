@@ -47,6 +47,11 @@ its arrays freed.
 `screenshot.js` renders a frame at an explicit size through each viewer's own draw
 path (the viewer lends its canvas through a small set of hooks) and annotates it.
 
+`oit.js` is the weighted blended order-independent transparency shared by both
+viewers: the GLSL that writes the accumulation and revealage passes, the offscreen
+targets and the composite. Each viewer's draw loop runs opaque, accumulate, reveal
+and composite, and falls back to its legacy single pass when unsupported or off.
+
 The camera maths shared by both viewers (matrices, perspective or orthographic
 projection, the scale bar and the fit rule) is `camera.js`.
 

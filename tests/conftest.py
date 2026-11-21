@@ -133,6 +133,29 @@ def nested_box(write_gdml):
     return write
 
 
+# Ports Chromium refuses to navigate to (ERR_UNSAFE_PORT) that a random bind can hit.
+CHROMIUM_BLOCKED_PORTS = {
+    1719,
+    1720,
+    1723,
+    2049,
+    3659,
+    4045,
+    5060,
+    5061,
+    6000,
+    6566,
+    6665,
+    6666,
+    6667,
+    6668,
+    6669,
+    6679,
+    6697,
+    10080,
+}
+
+
 @pytest.fixture
 def served():
     """``served(directory) -> base URL``: serves a directory over real
@@ -142,6 +165,9 @@ def served():
 
     def serve(directory):
         server = create_server(Path(directory), 0)
+        while server.server_port in CHROMIUM_BLOCKED_PORTS:  # navigation refuses these
+            server.server_close()
+            server = create_server(Path(directory), 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         running.append((server, thread))
