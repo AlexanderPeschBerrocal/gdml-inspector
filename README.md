@@ -66,9 +66,12 @@ destination. `python -m gdml_inspector` supports the same options as the main CL
 | Subsystem/layer toggles and unloading hidden geometry | Not applicable | Yes |
 | Structured diagnostics (code, severity, category, construct, backend) | Yes | Yes |
 
-The subsystem grouping currently uses COCOA-inspired name and shape heuristics;
-it is not the complete GDML volume hierarchy. Lazy loading reduces browser
-transfer/GPU work; Python still builds all selected chunks before serving them.
+By default the lazy subsystem grouping uses COCOA-inspired name and shape heuristics
+(`--grouping cocoa`). Other groupings are one option away: by placement path
+(`--grouping hierarchy --group-depth N`), by material, on a spatial grid
+(`--grid-cell MM`), or your own rules in a JSON file (`--grouping-rules`); see
+[limitations](docs/limitations.md). Lazy loading reduces browser transfer/GPU work;
+Python still builds all selected chunks before serving them.
 
 ## Backends and fidelity
 

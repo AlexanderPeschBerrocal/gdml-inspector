@@ -388,6 +388,53 @@ API):**
 - The caps bound the work spent on geometry: at most one rejected solid is
   meshed past the cap. They do not bound parsing the GDML itself.
 
+**Grouping (`--lazy --grouping`, `--group-depth`, `--grid-cell`, `--grouping-rules`).**
+
+The layer tree and the chunk files follow a *grouping*: a `(subsystem, layer)` per
+object.
+
+- `cocoa` (the default, unchanged): the original name and shape heuristics that
+  recognise `ecal`, `hcal`, `irongap` and tracker names and build layer names from
+  radius and z. It is detector-specific by design and is now just one preset.
+- `hierarchy`: the subsystem is the first path segment below the world and the
+  layer the next `--group-depth - 1` segments (`(direct)` when there are none);
+  Geant4 address suffixes are stripped so repeated copies share a layer.
+- `material`: the subsystem is the material, the layer the logical volume.
+- `spatial`: a regular grid of `--grid-cell` mm (default 500) over each object's
+  bounding-box centre, layers named `x2 y-1 z0` (floor division, so negative
+  cells are consistent).
+- `none`: a single layer.
+- **Rules file** (`--grouping-rules FILE.json`): tried before the strategy, in
+  order, first match wins; an object no rule matches falls through to
+  `--grouping`.
+
+  ```json
+  {"version": 1, "rules": [
+    {"match": {"path": "world/calo/*"}, "subsystem": "Calo", "layer": "inner"},
+    {"match": {"material": "G4_Fe", "volume": "hcal*"}, "subsystem": "Iron"}
+  ]}
+  ```
+
+  `match` fields (all must match): `path`, `name` (last path segment), `volume`,
+  `material`, `solid`. Patterns are literal text or `fnmatch` wildcards (`*`, `?`,
+  `[seq]`), never regular expressions, so no pattern can run away or fail; a
+  pattern matches either the original name or the one without its Geant4 address.
+  `"exact": true` compares literally instead. A rule without `layer` keeps the
+  strategy's layer. Every problem in a file is reported at once and the export
+  stops with exit code 2.
+- The strategy, its options and the rules file's name, count and sha256 are
+  recorded in the provenance, so `--reuse-assets` refuses a different explicit
+  `--grouping`, `--group-depth`, `--grid-cell` or rules file.
+- Subsystems sort with the known ones first (Tracker, ECAL, Calo support, HCAL,
+  Other), then every other by name, each with its layers kept together.
+- A grouping changes only which chunk an object lands in: the same objects,
+  ids, vertices and metadata are exported (tested for every strategy). A fine
+  grouping (a grid of small cells, one layer per path) makes many small chunks;
+  `--chunk-vertices` still caps each, and instancing is decided per chunk, so a
+  fine grouping shares fewer meshes.
+- Not done: regular expressions in rules, per-object colours or ordering in
+  rules, and a graphical way to edit rules.
+
 **Export memory (`--lazy --memory-budget MIB`, default 512).**
 
 - A chunk part that cannot grow any more (the next object would take it over

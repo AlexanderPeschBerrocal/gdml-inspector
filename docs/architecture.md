@@ -44,6 +44,11 @@ keeps both descriptions of each chunk until the part is closed (full, or release
 early by `--memory-budget`), when its bytes are written to a spill directory and
 its arrays freed.
 
+Which subsystem and layer (chunk) an object belongs to is decided by a
+`Grouping` (`grouping.py`): a strategy (`cocoa`, `hierarchy`, `material`,
+`spatial`, `none`) plus optional ordered rules from a JSON file. The builder asks
+it once per object; nothing downstream knows how the answer was reached.
+
 The hierarchy tree (`tree.js`), picker (`picking.js`) and inspector
 (`inspector.js`) are shared browser assets injected into both viewers.
 Lazy chunks (format v2) carry one `objectId + 1` per vertex, and the lazy
