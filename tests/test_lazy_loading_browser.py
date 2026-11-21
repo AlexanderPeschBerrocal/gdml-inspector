@@ -116,9 +116,9 @@ def test_switching_a_queued_layer_off_never_requests_it(
     page.evaluate("maxFetches = 1")
     start_all(page)
     page.wait_for_function("activeFetches === 1")
-    queued = page.evaluate(
-        "MANIFEST.chunks.filter(c => states[c.key].loading && !states[c.key].controller).map(c => c.baseKey)"
-    )
+    waiting = "MANIFEST.chunks.filter(c => states[c.key].loading && !states[c.key].controller)"
+    page.wait_for_function(f"{waiting}.length === {len(KEYS) - 1}")
+    queued = page.evaluate(f"{waiting}.map(c => c.baseKey)")
     assert len(queued) == len(KEYS) - 1
     victim = queued[-1]
     page.evaluate(f"setLayer({json.dumps(victim)}, false)")

@@ -61,7 +61,7 @@ destination. `python -m gdml_inspector` supports the same options as the main CL
 | Clipping: shader-based phi wedge (keep/remove) plus x/y/z planes, slabs and an arbitrary plane; open (uncapped) cuts | Yes | Yes |
 | Material toggles, scoped literal search, exclude, solid-type filter, invert | Yes | Yes (from metadata, no chunk fetch; needs a v2 export) |
 | Depth-correct click picking, highlight and placement inspector | Yes | Yes (needs a v2 export) |
-| Wireframe overlay and light/dark theme | Yes | Not yet |
+| Wireframe overlay and light/dark theme | Yes | Yes |
 | Physical-volume hierarchy tree with search and focus | Yes (hide/isolate too) | Yes, hide/isolate too (needs a v2 export) |
 | Subsystem/layer toggles and unloading hidden geometry | Not applicable | Yes |
 | Structured diagnostics (code, severity, category, construct, backend) | Yes | Yes |

@@ -249,6 +249,8 @@ def test_a_corrupt_mesh_table_fails_only_its_layer(
     assert "Corrupt mesh table" in page.get_attribute(
         ".layer-status.error span", "title"
     )
+    # The other layers keep loading while the broken one reports its error.
+    page.wait_for_function("Object.values(states).every(s => !s.loading)")
     assert (
         page.evaluate("Object.values(states).filter(s => s.loaded).length")
         == len(manifest["chunks"]) - 1
