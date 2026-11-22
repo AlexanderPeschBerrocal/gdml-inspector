@@ -431,10 +431,27 @@ hidden".
     its container, which also fixed the canvas's CSS height following a buffer of
     another aspect ratio). Memory use grows with the output size (8192 x 8192 needs
     well over 250 MB of drawing buffer).
-- Not done yet (issue #6): per-selection opacity or colours, a documented
-  transparency-ordering technique (the standalone viewer draws with blending and
-  no depth test), a configurable on-screen background, and a way to tell real
-  solid edges from triangle diagonals.
+- **Transparency** uses weighted blended order-independent transparency in both
+  viewers (a checkbox, on by default), so nested translucent tubes, thin disks and
+  overlapping meshes look the same whatever order they were exported in. Opaque
+  surfaces are drawn first into an offscreen target with depth; translucent ones are
+  accumulated (colour weighted by opacity and depth) and their revealage multiplied
+  in two further passes that test against the opaque depth without writing it; a
+  final pass composites. Known limits:
+  - It is an approximation: the weight depends on distance, not on exact layer
+    order, so strongly different colours in deep stacks can blend slightly
+    differently from an exact sorted result.
+  - The offscreen targets are not multisampled, so silhouettes are not antialiased
+    in scenes that use it; wireframe and axes are drawn afterwards on the normal
+    (antialiased) buffer.
+  - It costs three passes over the translucent geometry instead of one, and needs
+    half-float (or float) render targets. Without them, or with the checkbox off,
+    the old order-dependent drawing is used and the panel says so. It is only used
+    when something is translucent (opacity below 100 % or a colour alpha below 255).
+  - The checkbox is a display preference and is not saved in a view state.
+  - Picking is unaffected (it still selects the frontmost surface).
+- Not done yet (issue #6): per-selection opacity or colours, a configurable
+  on-screen background, and a way to tell real solid edges from triangle diagonals.
 
 ## Rendering and size limits
 
@@ -612,7 +629,7 @@ object.
   like the first operand in the Python backend or after backend fallback.
 - Mesh quality is polygonal approximation of curves, not a physical tolerance.
 - Picking is depth-correct in both viewers (see "Object picking" above).
-  Transparency uses the inherited rendering approach: opacity is for display
+  Opacity is for display
   only, so a click always selects the frontmost surface under the cursor, even
   when it is drawn translucent; there is no click-through for translucent shells.
 - By default the lazy viewer groups objects by heuristics, not

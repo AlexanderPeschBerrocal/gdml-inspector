@@ -43,7 +43,7 @@ uv run --no-sync pytest tests/test_*browser*.py \
 - **What is covered:** both programs' shaders link with no GL error; the
   camera presets, opacity, wireframe, axes, dark-mode, clipping, material and
   hierarchy/picking/diagnostics controls (standalone); lazy picking
-  (`test_screenshot_browser.py` decodes the downloaded PNGs (with a small reader in
+  (`test_oit_browser.py` checks that transparency is order independent in both viewers and that the fallback works; `test_screenshot_browser.py` decodes the downloaded PNGs (with a small reader in
   `tests/png.py`) to check size, framing, scale bar, alpha and the shown state in
   both viewers; `test_camera_browser.py` runs the same projection, scale-bar, fit and reset
   checks against both viewers; `test_grouping.py` / `test_grouping_browser.py` cover each strategy, rule
